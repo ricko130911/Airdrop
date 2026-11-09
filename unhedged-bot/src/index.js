@@ -4,6 +4,7 @@ import { createLogger } from './logger.js';
 import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
 import { Bot } from './bot.js';
+import { startDashboard } from './dashboard/server.js';
 import { discoverMarkets, extractStrike, marketText, marketType } from './markets.js';
 
 const HELP = `Bot Unhedged Up/Down 5 menit
@@ -50,6 +51,7 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
+  if (cfg.dashboardEnabled) startDashboard({ bot, cfg, log });
   await bot.start();
 }
 

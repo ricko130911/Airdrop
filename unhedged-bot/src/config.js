@@ -66,6 +66,12 @@ export function loadConfig() {
     discoveryMs: num('DISCOVERY_MS', 30000),
     logLevel: str('LOG_LEVEL', 'info'),
     logDir: str('LOG_DIR', 'logs'),
+
+    dashboardEnabled: bool('DASHBOARD_ENABLED', true),
+    dashboardHost: str('DASHBOARD_HOST', '0.0.0.0'),
+    dashboardPort: num('DASHBOARD_PORT', 3005),
+    dashboardUser: str('DASHBOARD_USER', 'admin'),
+    dashboardPassword: str('DASHBOARD_PASSWORD'),
   };
   validate(cfg);
   return cfg;

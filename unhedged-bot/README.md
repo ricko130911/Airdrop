@@ -80,6 +80,108 @@ Buat di **Account → API Keys**. Yang dibutuhkan:
 `order:read` (ditambah `bet:place`, `bet:read` untuk market PARIMUTUEL).
 **Jangan aktifkan `balance:withdraw`.** Bot tidak pernah membutuhkannya.
 
+## Dashboard web
+
+Saat bot berjalan, dashboard otomatis aktif di **port 3005**. Isinya:
+
+- **Ringkasan:** PnL (hari ini / simulasi), win rate, akurasi model + Brier score, saldo, dan meter exposure
+- **Harga pasar** BTC/ETH/SOL/CC dengan grafik 1 jam (arahkan kursor/sentuh untuk melihat harga)
+- **Market dipantau:** hitung mundur, bar peluang UP vs DOWN, spot vs harga acuan, keputusan bot, dan order aktif
+- **Kurva PnL kumulatif** dengan tooltip per trade
+- **Riwayat market** dan **jurnal aktivitas** real-time
+- **Tombol kontrol:** Jeda/Lanjutkan trading, Batalkan semua order, Lepas rem darurat
+
+Dashboard dilindungi login. **Wajib isi `DASHBOARD_PASSWORD`** (minimal 8 karakter) di `.env`.
+Tanpa password, dashboard tidak akan dijalankan bila dibuka ke publik. Login dengan
+username `DASHBOARD_USER` (default `admin`) dan password tersebut. Setelah 10 kali gagal login,
+IP tersebut diblokir selama 15 menit.
+
+## Deploy di VPS dengan PM2 (dikendalikan dari Termux)
+
+### 1. Masuk ke VPS dari Termux
+
+```bash
+pkg update && pkg install openssh
+ssh root@IP_VPS_ANDA
+```
+
+### 2. Pasang Node.js, Git, dan PM2 di VPS (Ubuntu/Debian)
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs git
+npm install -g pm2
+node -v   # pastikan v20 atau lebih baru
+```
+
+### 3. Ambil kode dan atur konfigurasi
+
+```bash
+git clone https://github.com/ricko130911/Airdrop.git
+cd Airdrop
+git checkout ccr-11623a72-xsp3o6   # lewati bila sudah di-merge ke main
+cd unhedged-bot
+cp .env.example .env
+nano .env    # isi DASHBOARD_PASSWORD (dan UNHEDGED_API_KEY untuk live)
+```
+
+Repo privat? Saat `git clone` diminta login, pakai username GitHub dan
+**Personal Access Token** sebagai password.
+
+### 4. Jalankan dengan PM2
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save                 # simpan daftar proses
+pm2 startup              # jalankan perintah yang ditampilkan agar bot hidup lagi setelah VPS reboot
+```
+
+### 5. Buka port 3005
+
+```bash
+ufw allow 3005/tcp       # bila memakai UFW
+```
+
+Bila VPS di cloud (AWS, GCP, Vultr, DigitalOcean, dan lain-lain), buka juga port **3005/TCP**
+di firewall / security group panel penyedia VPS.
+
+### 6. Buka dashboard
+
+Di browser HP atau laptop: **`http://IP_VPS_ANDA:3005`**, lalu login.
+
+### Perintah PM2 yang berguna
+
+```bash
+pm2 status                    # status bot
+pm2 logs unhedged-bot         # lihat log real-time (Ctrl+C untuk keluar)
+pm2 restart unhedged-bot      # restart setelah mengubah .env
+pm2 stop unhedged-bot         # hentikan bot (order bot dibatalkan dulu)
+git pull && pm2 restart unhedged-bot   # update ke versi terbaru
+```
+
+> `ecosystem.config.cjs` sengaja memakai `instances: 1`. Jangan jalankan lebih dari satu
+> bot dengan API key yang sama, karena order bisa dobel.
+
+### Keamanan (disarankan)
+
+`http://` tidak terenkripsi, jadi password dikirim tanpa enkripsi. Pilihan yang lebih aman:
+
+- **SSH tunnel dari Termux:** set `DASHBOARD_HOST=127.0.0.1` di `.env`, lalu di Termux jalankan
+  `ssh -L 3005:127.0.0.1:3005 root@IP_VPS_ANDA` dan buka `http://localhost:3005` di HP. Port 3005
+  tidak perlu dibuka di firewall.
+- Atau pasang HTTPS lewat reverse proxy (Caddy/Nginx) dengan domain sendiri.
+
+### Alternatif: jalankan langsung di Termux (tanpa VPS)
+
+```bash
+pkg install nodejs git
+npm install -g pm2
+# lalu langkah 3, 4, dan 6 di atas; buka http://localhost:3005
+```
+
+Android bisa mematikan Termux di background. Aktifkan `termux-wake-lock` dan matikan
+optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
+
 ## Pengaturan penting (`.env`)
 
 | Variabel | Default | Arti |
@@ -97,6 +199,9 @@ Buat di **Account → API Keys**. Yang dibutuhkan:
 | `SIGMA_MULTIPLIER` | `1.3` | >1 = model lebih hati-hati (antisipasi lonjakan) |
 | `MOMENTUM_WEIGHT` | `0.2` | Bobot momentum (0 = abaikan) |
 | `MARKET_REGEX` | kosong | Regex manual untuk memilih market bila deteksi otomatis gagal |
+| `DASHBOARD_PORT` | `3005` | Port dashboard web |
+| `DASHBOARD_HOST` | `0.0.0.0` | `0.0.0.0` = bisa diakses lewat IP VPS, `127.0.0.1` = hanya lokal/SSH tunnel |
+| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | `admin` / kosong | Login dashboard (password wajib) |
 
 ## Bila tidak ada market yang terdeteksi
 
@@ -132,5 +237,7 @@ src/
   api.js       Klien REST Unhedged (rate limit, retry aman)
   config.js    Pembacaan .env
   logger.js    Log ke konsol + logs/bot.log + logs/decisions.jsonl
+  dashboard/   Server dashboard (server.js) + tampilan web (public/)
+ecosystem.config.cjs  Konfigurasi PM2
 test/          Tes unit (node --test)
 ```

@@ -26,6 +26,11 @@ export class Bot {
     this.foreignMarkets = new Set(); // market yang punya order manual milik user -> tidak disentuh
     this.stats = { settled: 0, scored: 0, correct: 0, brierSum: 0, trades: 0, wins: 0, paperPnl: 0 };
     this.stopping = false;
+    this.paused = false; // dijeda manual dari dashboard
+    this.startedAt = Date.now();
+    this.history = []; // market yang sudah selesai (untuk dashboard)
+    this.account = { available: null, total: null, lockedEngine: null, username: null };
+    this.lastPriceRefresh = 0;
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -39,6 +44,7 @@ export class Bot {
       const me = await this.api.me().catch((e) => {
         throw new Error(`API key tidak valid / scope user:read tidak ada: ${e.message}`);
       });
+      this.account.username = me?.username ?? me?.id ?? null;
       this.log.info(`Login sebagai ${me?.username ?? me?.id ?? '?'}`);
       await this.refreshRisk(true);
       // Market yang sudah punya order terbuka (dibuat manual) tidak akan disentuh bot
@@ -72,6 +78,11 @@ export class Bot {
     if (now - this.lastDiscovery >= this.cfg.discoveryMs) await this.refreshMarkets();
     if (this.live && now - this.lastRisk >= 30_000) await this.refreshRisk();
     if (this.live) await this.syncOrders();
+    if (now - this.lastPriceRefresh >= 10_000) {
+      // Segarkan harga semua aset (untuk ticker dashboard), error diabaikan
+      this.lastPriceRefresh = now;
+      await Promise.all(this.cfg.assets.map((a) => this.prices.series(a).catch(() => null)));
+    }
 
     const entries = [...this.markets.values()].sort((a, b) => a.window.endMs - b.window.endMs);
     for (const entry of entries) {
@@ -138,6 +149,9 @@ export class Bot {
       const [bal, eq] = await Promise.all([this.api.balance(), this.api.equity().catch(() => null)]);
       const available = Number(bal?.balance?.available);
       if (this.cfg.bankrollUsd === null && Number.isFinite(available)) this.bankroll = available;
+      this.account.available = Number.isFinite(available) ? available : null;
+      this.account.total = Number(bal?.balance?.total) || null;
+      this.account.lockedEngine = Number(bal?.balance?.lockedEngine) || 0;
       const dayPnl = Number(eq?.equity?.dayPnl ?? eq?.equity?.dayChange);
       if (Number.isFinite(dayPnl)) this.dayPnl = dayPnl;
       if (initial) this.log.info(`Saldo available=$${fmt(available, 2)} | PnL hari ini=$${fmt(this.dayPnl, 2)}`);
@@ -195,7 +209,7 @@ export class Bot {
     for (const entry of this.markets.values()) {
       if (entry.order) total += entry.order.price * entry.order.quantity;
       if (entry.bet) total += entry.bet.stake;
-      if (!this.live && entry.paper) total += entry.paper.price * entry.paper.quantity;
+      if (!this.live && entry.paper && !entry.order) total += entry.paper.price * entry.paper.quantity;
     }
     for (const [marketId, cost] of this.positionCost) if (this.markets.has(marketId)) total += cost;
     return total;
@@ -239,10 +253,20 @@ export class Bot {
       this.log.debug(`${tag} lewati: ${est.reason}`);
       return;
     }
-    entry.lastEval = { pUp: est.pUp, secondsLeft, spot: est.spot };
+    entry.lastEval = { pUp: est.pUp, secondsLeft, spot: est.spot, sigma: est.sigma, at: Date.now() };
 
-    if (this.halted) return;
-    if (entry.hasPosition || entry.bet) return; // sudah punya posisi di market ini, tahan sampai selesai
+    if (this.halted) {
+      entry.lastDecision = `dihentikan: ${this.halted}`;
+      return;
+    }
+    if (this.paused) {
+      entry.lastDecision = 'dijeda';
+      return;
+    }
+    if (entry.hasPosition || entry.bet) {
+      entry.lastDecision = 'menahan posisi';
+      return;
+    }
 
     const exposureLeftUsd = this.cfg.maxOpenExposureUsd - this.exposureUsd() + (entry.order ? entry.order.price * entry.order.quantity : 0);
     const bankroll = this.bankroll ?? 0;
@@ -258,6 +282,7 @@ export class Bot {
         bankroll,
         exposureLeftUsd,
       });
+      entry.lastDecision = d.action === 'bet' ? `taruh ${d.side.toUpperCase()} $${d.stake.toFixed(2)}` : d.reason;
       if (d.action !== 'bet') {
         this.log.debug(`${tag} ${info} -> skip: ${d.reason}`);
         return;
@@ -267,6 +292,7 @@ export class Bot {
     }
 
     const d = decideOrderBook({ pUp: est.pUp, cfg: this.cfg, bankroll, exposureLeftUsd });
+    entry.lastDecision = d.action === 'buy' ? `beli ${d.side.toUpperCase()} @ ${d.price.toFixed(2)}` : d.reason;
     if (d.action !== 'buy') {
       this.log.debug(`${tag} ${info} -> skip: ${d.reason}`);
       if (entry.order) await this.cancelOrder(entry, `sinyal hilang (${d.reason})`);
@@ -456,6 +482,7 @@ export class Bot {
     s.brierSum += brier(entry.lastEval.pUp, outcomeUp);
     if ((entry.lastEval.pUp >= 0.5 ? 1 : 0) === outcomeUp) s.correct++;
     let tradeNote = '';
+    let trade = null;
     // Live: hanya laporkan bila order benar-benar terisi (posisi terdeteksi) atau bet masuk
     if (entry.paper && (!this.live || entry.hasPosition || entry.bet)) {
       const won = (entry.paper.side === 'up' ? 1 : 0) === outcomeUp;
@@ -465,8 +492,22 @@ export class Bot {
         if (won) s.wins++;
         s.trades++;
       }
+      trade = { side: entry.paper.side, price: entry.paper.price, quantity: entry.paper.quantity, won, pnl };
       tradeNote = ` | posisi ${entry.paper.side.toUpperCase()} ${won ? 'MENANG' : 'KALAH'} ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
     }
+    this.history.push({
+      ts: Date.now(),
+      endMs: entry.window.endMs,
+      marketId: entry.market.id,
+      asset: entry.asset,
+      question: entry.market.question ?? entry.market.title ?? '',
+      outcome: outcomeUp ? 'up' : 'down',
+      source,
+      pUp: entry.lastEval.pUp,
+      correct: (entry.lastEval.pUp >= 0.5 ? 1 : 0) === outcomeUp,
+      trade,
+    });
+    if (this.history.length > 500) this.history.shift();
     this.log.journal({ kind: 'settle', marketId: entry.market.id, asset: entry.asset, outcomeUp, source, lastEval: entry.lastEval, paper: entry.paper });
     this.log.info(
       `[${entry.asset}] selesai: ${outcomeUp ? 'UP' : 'DOWN'} (sumber ${source}), prediksi terakhir pUp=${fmt(entry.lastEval.pUp)}${tradeNote}` +
@@ -474,5 +515,100 @@ export class Bot {
         (!this.live ? ` | paper PnL $${s.paperPnl.toFixed(2)} (${s.wins}/${s.trades} menang)` : ''),
     );
     return true;
+  }
+
+  // ------------------------------------------------------------------ kontrol & dashboard
+
+  async setPaused(paused) {
+    this.paused = paused;
+    this.log.warn(paused ? 'Trading DIJEDA dari dashboard.' : 'Trading DILANJUTKAN dari dashboard.');
+    if (paused) for (const entry of this.markets.values()) await this.cancelOrder(entry, 'dijeda');
+  }
+
+  async cancelAll() {
+    this.log.warn('Membatalkan semua order bot (permintaan dashboard).');
+    for (const entry of this.markets.values()) await this.cancelOrder(entry, 'dibatalkan dari dashboard');
+  }
+
+  resumeAfterHalt() {
+    if (!this.halted) return;
+    this.log.warn(`Rem darurat dilepas manual (sebelumnya: ${this.halted}).`);
+    this.halted = null;
+  }
+
+  /** Data ringkas untuk dashboard (tanpa API key/rahasia). */
+  snapshot() {
+    const now = Date.now();
+    const c = this.cfg;
+    const s = this.stats;
+    const markets = [...this.markets.values()]
+      .sort((a, b) => a.window.endMs - b.window.endMs)
+      .map((e) => ({
+        id: e.market.id,
+        asset: e.asset,
+        type: e.type,
+        question: e.market.question ?? e.market.title ?? '',
+        startMs: e.window.startMs,
+        endMs: e.window.endMs,
+        secondsLeft: (e.window.endMs - now) / 1000,
+        upLabel: e.sides.up.label,
+        downLabel: e.sides.down.label,
+        strike: e.strike?.value ?? null,
+        strikeSource: e.strike?.source ?? null,
+        pUp: e.lastEval?.pUp ?? null,
+        spot: e.lastEval?.spot ?? null,
+        evalAgeSec: e.lastEval ? (now - e.lastEval.at) / 1000 : null,
+        decision: e.lastDecision ?? null,
+        order: e.order ? { side: e.order.side, price: e.order.price, quantity: e.order.quantity, dry: !!e.order.dry } : null,
+        hasPosition: e.hasPosition || !!e.bet,
+        foreign: this.foreignMarkets.has(e.market.id),
+      }));
+
+    const prices = {};
+    for (const a of c.assets) {
+      const cached = this.prices.cache?.get(a)?.data;
+      if (!cached) continue;
+      const cutoff = now - 60 * 60_000;
+      prices[a] = {
+        spot: cached.spot,
+        source: cached.source,
+        series: cached.series.filter((p) => p.t >= cutoff).map((p) => [p.t, p.p]),
+      };
+    }
+
+    const tradesDone = this.history.filter((h) => h.trade);
+    const realized = tradesDone.reduce((acc, h) => acc + h.trade.pnl, 0);
+    return {
+      now,
+      mode: this.live ? 'LIVE' : 'DRY-RUN',
+      startedAt: this.startedAt,
+      paused: this.paused,
+      halted: this.halted,
+      account: { ...this.account, dayPnl: this.live ? this.dayPnl : null, bankroll: this.bankroll },
+      exposureUsd: this.exposureUsd(),
+      config: {
+        assets: c.assets,
+        maxOrderUsd: c.maxOrderUsd,
+        maxOpenExposureUsd: c.maxOpenExposureUsd,
+        maxDailyLossUsd: c.maxDailyLossUsd,
+        minEdge: c.minEdge,
+        kellyFraction: c.kellyFraction,
+        tradeWhenSecondsLeft: c.tradeWhenSecondsLeft,
+        stopSecondsLeft: c.stopSecondsLeft,
+        sigmaMultiplier: c.sigmaMultiplier,
+      },
+      stats: {
+        settled: s.settled,
+        accuracy: s.scored ? s.correct / s.scored : null,
+        brier: s.scored ? s.brierSum / s.scored : null,
+        trades: tradesDone.length,
+        wins: tradesDone.filter((h) => h.trade.won).length,
+        pnl: realized,
+      },
+      markets,
+      prices,
+      history: this.history.slice(-200),
+      logs: this.log.recent ? this.log.recent(150) : [],
+    };
   }
 }

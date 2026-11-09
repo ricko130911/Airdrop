@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0c" />
+  <title>Unhedged · Private Trading Desk</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="monogram" aria-hidden="true">U</div>
+      <div>
+        <div class="brand-title">Unhedged <em>Desk</em></div>
+        <div class="brand-sub">Private Trading · Up/Down 5 Menit</div>
+      </div>
+    </div>
+    <div class="top-meta">
+      <span class="pill" id="modePill">—</span>
+      <span class="pill" id="statusPill"><span class="dot"></span><span>Menghubungkan…</span></span>
+      <span class="meta-text" id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="banner" id="haltBanner" hidden>
+      <span class="banner-icon" aria-hidden="true">⚠</span>
+      <span id="haltText"></span>
+      <button class="btn btn-ghost" data-action="release-halt">Lepas rem darurat</button>
+    </div>
+
+    <!-- KPI -->
+    <section class="kpis" aria-label="Ringkasan">
+      <article class="kpi kpi-hero">
+        <div class="kpi-label" id="pnlLabel">Profit &amp; Loss</div>
+        <div class="kpi-value" id="kpiPnl">$0.00</div>
+        <div class="kpi-foot" id="kpiPnlFoot">—</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Win Rate</div>
+        <div class="kpi-value" id="kpiWin">—</div>
+        <div class="kpi-foot" id="kpiWinFoot">belum ada trade</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Akurasi Model</div>
+        <div class="kpi-value" id="kpiAcc">—</div>
+        <div class="kpi-foot" id="kpiAccFoot">Brier —</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Saldo Tersedia</div>
+        <div class="kpi-value" id="kpiBal">—</div>
+        <div class="kpi-foot" id="kpiBalFoot">—</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Exposure</div>
+        <div class="kpi-value" id="kpiExp">$0.00</div>
+        <div class="meter" role="meter" aria-label="Exposure terhadap batas" id="expMeter"><span id="expFill"></span></div>
+        <div class="kpi-foot" id="kpiExpFoot">—</div>
+      </article>
+    </section>
+
+    <!-- Ticker harga -->
+    <section aria-labelledby="hPrices">
+      <div class="section-head">
+        <h2 id="hPrices">Harga Pasar</h2>
+        <span class="section-note">1 jam terakhir</span>
+      </div>
+      <div class="tickers" id="tickers"></div>
+    </section>
+
+    <!-- Market -->
+    <section aria-labelledby="hMarkets">
+      <div class="section-head">
+        <h2 id="hMarkets">Market Dipantau</h2>
+        <div class="controls">
+          <button class="btn btn-gold" data-action="pause" id="btnPause">Jeda Trading</button>
+          <button class="btn btn-ghost" data-action="cancel-all">Batalkan Semua Order</button>
+        </div>
+      </div>
+      <div class="legend" aria-label="Legenda">
+        <span><i class="sw sw-up"></i>Naik (UP)</span>
+        <span><i class="sw sw-down"></i>Turun (DOWN)</span>
+        <span class="legend-note">Peluang menurut model bot</span>
+      </div>
+      <div class="markets" id="markets"></div>
+    </section>
+
+    <!-- PnL + riwayat -->
+    <section class="split">
+      <div class="card">
+        <div class="section-head tight">
+          <h2>Kurva PnL Kumulatif</h2>
+          <span class="section-note" id="pnlNote">—</span>
+        </div>
+        <div class="chart" id="pnlChart"></div>
+      </div>
+      <div class="card">
+        <div class="section-head tight">
+          <h2>Parameter Strategi</h2>
+        </div>
+        <dl class="params" id="params"></dl>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="hHistory">
+      <div class="section-head tight">
+        <h2 id="hHistory">Riwayat Market</h2>
+        <span class="section-note" id="histNote">—</span>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Waktu</th><th>Aset</th><th>Hasil</th><th>Prediksi</th><th>Posisi</th><th class="num">PnL</th></tr>
+          </thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="hLogs">
+      <div class="section-head tight">
+        <h2 id="hLogs">Jurnal Aktivitas</h2>
+        <span class="section-note">real-time</span>
+      </div>
+      <div class="logs" id="logs" role="log" aria-live="polite"></div>
+    </section>
+
+    <footer class="foot">
+      <span>Unhedged Desk</span>
+      <span class="sep">·</span>
+      <span id="uptime">—</span>
+      <span class="sep">·</span>
+      <span>Trading mengandung risiko. Gunakan dana yang siap hilang.</span>
+    </footer>
+  </main>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
