@@ -1,0 +1,16 @@
+{
+  "name": "unhedged-updown-bot",
+  "version": "1.0.0",
+  "description": "Bot trading market 5 menit Up/Down (BTC, ETH, SOL, CC) di Unhedged",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js run",
+    "discover": "node src/index.js discover",
+    "status": "node src/index.js status",
+    "test": "node --test test/*.test.js"
+  }
+}
