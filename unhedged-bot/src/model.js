@@ -107,3 +107,61 @@ export function kellyStakeUsd({ prob, price, bankroll, fraction = 0.25 }) {
 export function brier(prob, outcome) {
   return (prob - outcome) ** 2;
 }
+
+/**
+ * Peluang UP untuk market Unhedged yang diselesaikan dengan RATA-RATA (TWAP):
+ *   UP menang bila rata-rata N detik terakhir (penutupan per detik) >= harga acuan.
+ *
+ * Rata-rata akhir = (jumlah harga yang SUDAH diketahui + jumlah harga yang AKAN datang) / N.
+ * Harga mendatang dimodelkan sebagai random walk dari harga sekarang. Varians rata-rata
+ * dari m titik random walk yang dimulai τ0 detik lagi ≈ σ²·(τ0 + (m+1)(2m+1)/(6m)).
+ *
+ * @param {object} a
+ * @param {number} a.spot              harga sekarang
+ * @param {number} a.threshold         harga acuan resmi (TWAP awal)
+ * @param {number} a.secondsLeft       sisa detik sampai market ditutup
+ * @param {number} [a.avgSeconds=60]   panjang jendela rata-rata
+ * @param {number} [a.knownSum=0]      jumlah harga penutupan per detik yang sudah terjadi di jendela akhir
+ * @param {number} [a.knownCount=0]    banyaknya detik yang sudah diketahui
+ * @param {number} a.sigma             volatilitas per √detik
+ * @param {number} [a.drift=0]
+ * @param {number} [a.momentumWeight=0]
+ * @param {number} [a.sigmaMultiplier=1]
+ */
+export function probabilityUpTwap({
+  spot,
+  threshold,
+  secondsLeft,
+  avgSeconds = 60,
+  knownSum = 0,
+  knownCount = 0,
+  sigma,
+  drift = 0,
+  momentumWeight = 0,
+  sigmaMultiplier = 1,
+}) {
+  if (!(spot > 0) || !(threshold > 0)) return null;
+  const N = avgSeconds;
+  const left = Math.max(0, secondsLeft);
+  // Detik mendatang di dalam jendela rata-rata
+  const m = Math.min(N, Math.ceil(left));
+  // Detik yang sudah lewat di jendela tapi datanya belum ada -> dianggap = spot
+  const known = Math.min(knownCount, N - m);
+  const gap = N - m - known;
+  const fixedSum = (known > 0 ? (knownSum / knownCount) * known : 0) + gap * spot;
+
+  if (m <= 0) {
+    const twap = fixedSum / N;
+    return twap >= threshold ? 1 : 0;
+  }
+  if (!(sigma > 0)) return null;
+  const tau0 = Math.max(0, left - N);
+  const mu = momentumWeight * drift;
+  const futureMean = spot * (1 + mu * (tau0 + (m + 1) / 2));
+  const varFactor = tau0 + ((m + 1) * (2 * m + 1)) / (6 * m);
+  const futureSd = spot * sigma * sigmaMultiplier * Math.sqrt(varFactor);
+
+  const mean = (fixedSum + m * futureMean) / N;
+  const sd = (m / N) * futureSd;
+  return normCdf((mean - threshold) / sd);
+}

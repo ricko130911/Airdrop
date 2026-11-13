@@ -78,7 +78,8 @@ function firstField(obj, fields, parse) {
 /** Waktu buka dan tutup window market (ms). */
 export function windowTimes(m, durationSec) {
   const end = firstField(m, END_FIELDS, parseTime);
-  const start = firstField(m, START_FIELDS, parseTime);
+  const rcStart = parseTime(m.autoResolution?.resolverConfig?.windowStartTime);
+  const start = rcStart !== null ? { field: 'resolver.windowStartTime', value: rcStart } : firstField(m, START_FIELDS, parseTime);
   const endMs = end?.value ?? null;
   let startMs = start?.value ?? null;
   let startSource = start?.field ?? null;
@@ -101,6 +102,9 @@ function parsePriceValue(v) {
 
 /** Harga acuan (strike) bila tersedia di data market atau tertulis di pertanyaan ("... above $84,250"). */
 export function extractStrike(m) {
+  // 1) Harga acuan resmi Unhedged (rata-rata 60 detik sebelum window dimulai)
+  const r = resolverInfo(m);
+  if (r.threshold !== null) return { value: r.threshold, source: `unhedged:${r.thresholdStatus}`, final: r.thresholdStatus === 'final' };
   const f = firstField(m, STRIKE_FIELDS, parsePriceValue);
   if (f) return { value: f.value, source: `field:${f.field}` };
   const q = m.question ?? m.title ?? '';
@@ -224,4 +228,83 @@ export async function discoverMarkets(api, cfg, { includeRejected = false } = {}
 
 export function marketType(m) {
   return String(m.marketType ?? 'ORDER_BOOK').toUpperCase();
+}
+
+const toNum = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Info resolusi resmi dari market Unhedged (field autoResolution + priceReferences).
+ * Contoh: venue=binance, symbol=BTCUSDT, priceMethod=twap-60s-v1, averagingSeconds=60.
+ */
+export function resolverInfo(m) {
+  const rc = m?.autoResolution?.resolverConfig ?? {};
+  const refs = m?.priceReferences ?? {};
+  const start = refs.start ?? {};
+  const end = refs.end ?? {};
+  const method = rc.priceMethod ?? refs.method ?? null;
+  let threshold = toNum(start.priceUsd);
+  let thresholdStatus = threshold !== null ? start.status ?? 'final' : null;
+  if (threshold === null && toNum(start.provisionalPriceUsd) !== null) {
+    threshold = toNum(start.provisionalPriceUsd);
+    thresholdStatus = 'provisional';
+  }
+  if (threshold === null && toNum(rc.threshold) !== null) {
+    threshold = toNum(rc.threshold);
+    thresholdStatus = 'config';
+  }
+  const avg = toNum(rc.averagingSeconds) ?? (/twap-(\d+)s/i.exec(method ?? '')?.[1] ? Number(/twap-(\d+)s/i.exec(method)[1]) : 0);
+  return {
+    venue: rc.venue ? String(rc.venue).toLowerCase() : null,
+    symbol: rc.symbol ?? null,
+    asset: rc.asset ?? null,
+    quote: rc.quoteAsset ?? 'USDT',
+    interval: rc.interval ?? null,
+    method,
+    averagingSeconds: avg || 0,
+    threshold,
+    thresholdStatus,
+    aboveOutcome: toNum(rc.aboveOutcome),
+    belowOutcome: toNum(rc.belowOutcome),
+    endPrice: toNum(end.priceUsd) ?? toNum(end.provisionalPriceUsd),
+    endStatus: end.status ?? null,
+  };
+}
+
+/** Harga teratas order book per sisi dari orderBookStats (termasuk harga "effective" hasil cross-trade). */
+export function bookTop(m, sides) {
+  const s = m?.orderBookStats ?? {};
+  const pick = (obj, o) => toNum(obj?.[o.label]) ?? toNum(obj?.[o.engineId]) ?? toNum(obj?.[String(o.label).toUpperCase()]);
+  const side = (o) => {
+    const ask = pick(s.bestAskByOutcome, o);
+    const effAsk = pick(s.effectiveBestAskByOutcome, o);
+    const bid = pick(s.bestBidByOutcome, o);
+    const effBid = pick(s.effectiveBestBidByOutcome, o);
+    const asks = [ask, effAsk].filter((x) => x !== null);
+    const bids = [bid, effBid].filter((x) => x !== null);
+    return {
+      ask, // ask asli (penjual langsung)
+      bestAsk: asks.length ? Math.min(...asks) : null, // termasuk cross-trade
+      bestBid: bids.length ? Math.max(...bids) : null,
+      last: pick(s.lastPriceByOutcome, o),
+    };
+  };
+  return { up: side(sides.up), down: side(sides.down), volume: toNum(s.totalVolume) };
+}
+
+/** Fee taker tier 0 dari feeSchedule market (default 5%). */
+export function marketTakerFee(m) {
+  const tiers = Array.isArray(m?.feeSchedule) ? m.feeSchedule : [];
+  const t0 = tiers.find((t) => Number(t.tier) === 0) ?? tiers[0];
+  return toNum(t0?.takerFeeRate) ?? 0.05;
+}
+
+/** Sumber harga resolusi (venue + simbol) untuk market ini. */
+export function priceSourceOf(m, asset) {
+  const r = resolverInfo(m);
+  if (r.venue && r.symbol) return { venue: r.venue, symbol: r.symbol, asset: r.asset ?? asset, quote: r.quote };
+  return null;
 }

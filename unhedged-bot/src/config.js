@@ -56,7 +56,10 @@ export function loadConfig() {
     stopSecondsLeft: num('STOP_SECONDS_LEFT', 15),
     sigmaMultiplier: num('SIGMA_MULTIPLIER', 1.3),
     momentumWeight: num('MOMENTUM_WEIGHT', 0.2),
-    repriceThreshold: num('REPRICE_THRESHOLD', 0.02),
+    repriceThreshold: num('REPRICE_THRESHOLD', 0.03),
+    hysteresis: num('HYSTERESIS', 0.05),
+    // Fee per kontrak (fraksi harga). Kosong = pakai tarif taker tier 0 dari data market (5%)
+    feeRate: num('FEE_RATE', null),
 
     marketDurationSec: num('MARKET_DURATION_SEC', 300),
     marketRegex: str('MARKET_REGEX'),

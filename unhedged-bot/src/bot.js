@@ -1,6 +1,6 @@
-import { discoverMarkets, extractStrike, marketType } from './markets.js';
-import { estimateVolatility, estimateDrift, probabilityUp, brier } from './model.js';
-import { decideOrderBook, decideParimutuel, parimutuelPools } from './strategy.js';
+import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
+import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, brier } from './model.js';
+import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb } from './strategy.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmt = (x, d = 3) => (x === null || x === undefined || !Number.isFinite(x) ? '-' : x.toFixed(d));
@@ -115,6 +115,7 @@ export class Bot {
       const { accepted, total } = await discoverMarkets(this.api, this.cfg);
       let added = 0;
       for (const a of accepted) {
+        this.prices.setAssetSource(a.asset, priceSourceOf(a.market, a.asset));
         if (this.markets.has(a.market.id)) {
           this.markets.get(a.market.id).market = a.market; // perbarui data (pool, dll.)
           continue;
@@ -217,43 +218,104 @@ export class Bot {
 
   // ------------------------------------------------------------------ per market
 
+  /** Ambil data market terbaru (harga acuan resmi + order book teratas). */
+  async refreshMarketDetail(entry) {
+    try {
+      const res = await this.api.market(entry.market.id);
+      const mk = res?.market ?? res;
+      if (mk && mk.id === entry.market.id) entry.market = { ...entry.market, ...mk };
+    } catch (e) {
+      this.log.debug(`[${entry.asset}] gagal ambil detail market: ${e.message}`);
+    }
+    entry.book = bookTop(entry.market, entry.sides);
+    entry.feeRate = this.cfg.feeRate ?? marketTakerFee(entry.market);
+  }
+
   async computeProbability(entry, secondsLeft) {
     const data = await this.prices.series(entry.asset);
     if (!data) return { pUp: null, reason: 'harga aset tidak tersedia' };
+    const r = resolverInfo(entry.market);
+    const avgSec = r.averagingSeconds || 0;
 
-    if (entry.strike === null) {
+    // Harga acuan: pakai nilai resmi Unhedged (TWAP 60 detik sebelum window dimulai)
+    if (!entry.strike?.final) {
       const s = extractStrike(entry.market);
-      if (s) entry.strike = { ...s };
-      else {
-        const p = await this.prices.priceAt(entry.asset, entry.window.startMs);
-        if (p !== null) entry.strike = { value: p, source: `harga@open(${data.source})` };
+      if (s) entry.strike = s;
+      else if (!entry.strike) {
+        const from = entry.window.startMs - (avgSec || 1) * 1000;
+        const p = await this.prices.twap(entry.asset, from, entry.window.startMs);
+        if (p !== null) entry.strike = { value: p, source: `hitung-sendiri:twap-${avgSec || 1}s`, final: false };
       }
     }
     if (!entry.strike) return { pUp: null, reason: 'harga acuan (strike) belum diketahui' };
 
     const sigma = estimateVolatility(data.series);
     const drift = estimateDrift(data.series, { lookbackSec: 300 });
-    const pUp = probabilityUp({
+    const common = {
       spot: data.spot,
-      strike: entry.strike.value,
       secondsLeft,
       sigma,
       drift,
       momentumWeight: this.cfg.momentumWeight,
       sigmaMultiplier: this.cfg.sigmaMultiplier,
-    });
-    return { pUp, spot: data.spot, sigma, drift, source: data.source };
+    };
+
+    let pUp;
+    let known = null;
+    if (avgSec > 0) {
+      const endWindowStart = entry.window.endMs - avgSec * 1000;
+      if (Date.now() > endWindowStart) known = await this.prices.secondCloses(entry.asset, endWindowStart, entry.window.endMs);
+      pUp = probabilityUpTwap({
+        ...common,
+        threshold: entry.strike.value,
+        avgSeconds: avgSec,
+        knownSum: known?.sum ?? 0,
+        knownCount: known?.count ?? 0,
+      });
+    } else {
+      pUp = probabilityUp({ ...common, strike: entry.strike.value });
+    }
+    const knownAvg = known?.count ? known.sum / known.count : null;
+    return { pUp, spot: data.spot, sigma, drift, source: data.source, knownAvg, knownCount: known?.count ?? 0 };
+  }
+
+  /** Simulasi fill (DRY-RUN): order terisi hanya bila ada ask di order book <= harga order. */
+  simulateFill(entry, tag) {
+    const o = entry.order;
+    if (!o?.dry) return;
+    const ask = entry.book?.[o.side]?.bestAsk ?? null;
+    if (ask === null || ask > o.price) return;
+    const fill = Math.min(ask, o.price);
+    const fee = (entry.feeRate ?? 0) * fill * o.quantity;
+    entry.paper = { side: o.side, price: fill, quantity: o.quantity, fee };
+    entry.hasPosition = true;
+    entry.order = null;
+    this.log.info(`[DRY] ${tag} order TERISI: ${o.side.toUpperCase()} ${o.quantity} @ ${fill.toFixed(2)} (fee ~$${fee.toFixed(2)})`);
   }
 
   async handleMarket(entry, secondsLeft) {
-    const m = entry.market;
-    const est = await this.computeProbability(entry, secondsLeft);
+    const m0 = entry.market;
+    await this.refreshMarketDetail(entry);
+    const m = entry.market ?? m0;
     const tag = `[${entry.asset} ${Math.round(secondsLeft)}s]`;
+
+    // Arbitrase complete set (UP + DOWN < $1 setelah fee)
+    const arb = completeSetArb(entry.book, entry.feeRate);
+    if (arb && !entry.arb) {
+      this.log.warn(`${tag} PELUANG ARBITRASE: ask UP ${entry.book.up.bestAsk} + ask DOWN ${entry.book.down.bestAsk} = $${arb.costPerSet.toFixed(3)} per set (untung ~$${arb.profitPerSet.toFixed(3)}/set sebelum slippage)`);
+      this.log.journal({ kind: 'arb', marketId: m.id, asset: entry.asset, book: entry.book, ...arb });
+    }
+    entry.arb = arb;
+
+    this.simulateFill(entry, tag);
+
+    const est = await this.computeProbability(entry, secondsLeft);
     if (est.pUp === null) {
+      entry.lastDecision = est.reason;
       this.log.debug(`${tag} lewati: ${est.reason}`);
       return;
     }
-    entry.lastEval = { pUp: est.pUp, secondsLeft, spot: est.spot, sigma: est.sigma, at: Date.now() };
+    entry.lastEval = { pUp: est.pUp, secondsLeft, spot: est.spot, sigma: est.sigma, knownAvg: est.knownAvg, knownCount: est.knownCount, at: Date.now() };
 
     if (this.halted) {
       entry.lastDecision = `dihentikan: ${this.halted}`;
@@ -270,7 +332,8 @@ export class Bot {
 
     const exposureLeftUsd = this.cfg.maxOpenExposureUsd - this.exposureUsd() + (entry.order ? entry.order.price * entry.order.quantity : 0);
     const bankroll = this.bankroll ?? 0;
-    const info = `spot=${fmt(est.spot, 4)} strike=${fmt(entry.strike.value, 4)} pUp=${fmt(est.pUp)}`;
+    const twapInfo = est.knownCount ? ` twap60=${fmt(est.knownAvg, 4)}(${est.knownCount}s)` : '';
+    const info = `spot=${fmt(est.spot, 4)} acuan=${fmt(entry.strike.value, 4)}${twapInfo} pUp=${fmt(est.pUp)}`;
 
     if (entry.type === 'PARIMUTUEL') {
       const pools = parimutuelPools(m, entry.sides);
@@ -291,8 +354,19 @@ export class Bot {
       return;
     }
 
-    const d = decideOrderBook({ pUp: est.pUp, cfg: this.cfg, bankroll, exposureLeftUsd });
-    entry.lastDecision = d.action === 'buy' ? `beli ${d.side.toUpperCase()} @ ${d.price.toFixed(2)}` : d.reason;
+    const d = decideOrderBook({
+      pUp: est.pUp,
+      cfg: this.cfg,
+      bankroll,
+      exposureLeftUsd,
+      feeRate: entry.feeRate ?? 0,
+      currentSide: entry.order?.side ?? null,
+      book: entry.book,
+    });
+    entry.lastDecision =
+      d.action === 'buy'
+        ? `bid ${d.side.toUpperCase()} @ ${d.price.toFixed(2)}${d.ask !== null ? ` · ask ${d.ask.toFixed(2)}` : ' · belum ada penjual'}`
+        : d.reason;
     if (d.action !== 'buy') {
       this.log.debug(`${tag} ${info} -> skip: ${d.reason}`);
       if (entry.order) await this.cancelOrder(entry, `sinyal hilang (${d.reason})`);
@@ -304,12 +378,14 @@ export class Bot {
         await this.cancelOrder(entry, 'arah model berbalik');
       } else if (Math.abs(entry.order.price - d.price) >= this.cfg.repriceThreshold - 1e-9) {
         await this.replaceOrder(entry, d, tag, info);
+        this.simulateFill(entry, tag);
         return;
       } else {
         return; // order masih sesuai
       }
     }
     await this.placeOrder(entry, d, tag, info);
+    this.simulateFill(entry, tag);
   }
 
   // ------------------------------------------------------------------ eksekusi
@@ -328,7 +404,6 @@ export class Bot {
     if (!this.live) {
       this.log.info(`[DRY] ${msg}`);
       entry.order = { id: `dry-${Date.now()}`, side: d.side, outcome, price: d.price, quantity: d.quantity, dry: true };
-      entry.paper = { side: d.side, price: d.price, quantity: d.quantity, prob: d.prob };
       return;
     }
 
@@ -344,7 +419,7 @@ export class Bot {
       });
       const o = res?.order ?? {};
       entry.order = { id: String(o.id), side: d.side, outcome, price: d.price, quantity: d.quantity };
-      entry.paper = { side: d.side, price: d.price, quantity: d.quantity, prob: d.prob };
+      entry.paper = { side: d.side, price: d.fillsNow ? d.ask : d.price, quantity: d.quantity, fee: (entry.feeRate ?? 0) * d.price * d.quantity };
       this.stats.trades++;
       this.log.info(`${tag} order #${o.id} status=${o.status}`);
     } catch (e) {
@@ -373,7 +448,6 @@ export class Bot {
     if (!this.live || entry.order.dry) {
       this.log.info(`[DRY] ${tag} ${info} -> ubah harga ${entry.order.side.toUpperCase()} ${entry.order.price.toFixed(2)} -> ${priceStr}, qty ${d.quantity}`);
       entry.order = { ...entry.order, price: d.price, quantity: d.quantity };
-      entry.paper = { side: d.side, price: d.price, quantity: d.quantity, prob: d.prob };
       return;
     }
     try {
@@ -395,7 +469,7 @@ export class Bot {
       const r = res?.result ?? {};
       if (r.status === 'unchanged') return;
       entry.order = { ...entry.order, id: String(r.replacementOrderId ?? r.replacementOrder?.id ?? entry.order.id), price: d.price, quantity: d.quantity };
-      entry.paper = { side: d.side, price: d.price, quantity: d.quantity, prob: d.prob };
+      entry.paper = { side: d.side, price: d.price, quantity: d.quantity, fee: (entry.feeRate ?? 0) * d.price * d.quantity };
       this.log.info(`${tag} ${info} -> harga order diubah ke ${priceStr} (qty ${d.quantity})`);
     } catch (e) {
       this.log.error(`${tag} gagal ubah order: ${e.message}`);
@@ -407,9 +481,7 @@ export class Bot {
     const tag = `[${entry.asset}]`;
     if (!this.live || entry.order.dry) {
       this.log.info(`[DRY] ${tag} batalkan order ${entry.order.side.toUpperCase()} @ ${entry.order.price.toFixed(2)} (${reason})`);
-      entry.order = null;
-      // Dalam simulasi, order dianggap terisi (asumsi optimis) kecuali dibatalkan karena sinyal berubah
-      if (reason !== 'mendekati penutupan' && reason !== 'bot berhenti') entry.paper = null;
+      entry.order = null; // order simulasi yang dibatalkan = tidak pernah terisi
       return;
     }
     try {
@@ -464,16 +536,23 @@ export class Bot {
       if (mk?.winningOutcome !== undefined && mk?.winningOutcome !== null) {
         outcomeUp = Number(mk.winningOutcome) === entry.sides.up.index ? 1 : 0;
         source = 'unhedged';
+      } else if (mk) {
+        const r = resolverInfo(mk);
+        if (r.endPrice !== null && r.threshold !== null && r.endStatus === 'final') {
+          outcomeUp = r.endPrice >= r.threshold ? 1 : 0; // aturan Unhedged: sama dengan = UP
+          source = 'unhedged-twap';
+        }
       }
     } catch {
       /* belum resolve */
     }
     if (outcomeUp === null) {
       if (entry.settleAttempts < 8) return false; // tunggu hasil resmi sedikit lagi
-      const finalPrice = await this.prices.priceAt(entry.asset, entry.window.endMs);
+      const avgSec = resolverInfo(entry.market).averagingSeconds || 60;
+      const finalPrice = await this.prices.twap(entry.asset, entry.window.endMs - avgSec * 1000, entry.window.endMs);
       if (finalPrice === null) return true;
-      outcomeUp = finalPrice > entry.strike.value ? 1 : 0;
-      source = 'harga-bursa';
+      outcomeUp = finalPrice >= entry.strike.value ? 1 : 0;
+      source = 'hitung-sendiri';
     }
 
     const s = this.stats;
@@ -486,7 +565,8 @@ export class Bot {
     // Live: hanya laporkan bila order benar-benar terisi (posisi terdeteksi) atau bet masuk
     if (entry.paper && (!this.live || entry.hasPosition || entry.bet)) {
       const won = (entry.paper.side === 'up' ? 1 : 0) === outcomeUp;
-      const pnl = won ? entry.paper.quantity * (1 - entry.paper.price) : -entry.paper.quantity * entry.paper.price;
+      const fee = entry.paper.fee ?? 0;
+      const pnl = (won ? entry.paper.quantity * (1 - entry.paper.price) : -entry.paper.quantity * entry.paper.price) - fee;
       if (!this.live) {
         s.paperPnl += pnl;
         if (won) s.wins++;
@@ -555,6 +635,10 @@ export class Bot {
         downLabel: e.sides.down.label,
         strike: e.strike?.value ?? null,
         strikeSource: e.strike?.source ?? null,
+        twapKnown: e.lastEval?.knownCount ? { avg: e.lastEval.knownAvg, count: e.lastEval.knownCount } : null,
+        book: e.book ?? null,
+        feeRate: e.feeRate ?? null,
+        arb: e.arb ?? null,
         pUp: e.lastEval?.pUp ?? null,
         spot: e.lastEval?.spot ?? null,
         evalAgeSec: e.lastEval ? (now - e.lastEval.at) / 1000 : null,

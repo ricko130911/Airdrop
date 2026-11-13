@@ -9,30 +9,55 @@ export function floorCents(x) {
 
 /**
  * Keputusan untuk market ORDER_BOOK.
- * Strategi: pasang limit BID pada sisi yang diunggulkan model, di harga
- * (peluang model - MIN_EDGE). Order hanya terisi bila ada penjual di harga
- * itu atau lebih murah, jadi setiap fill punya edge minimal MIN_EDGE menurut model.
+ * Strategi: pasang limit BID pada sisi yang diunggulkan model, di harga maksimum yang
+ * masih menyisakan edge setelah fee:  peluang - harga - fee(harga) >= MIN_EDGE.
+ * Fee diperkirakan konservatif: feeRate x harga per kontrak (tarif taker).
+ * Bila order book punya ask <= harga itu, order langsung terisi di harga ask.
  *
- * @returns {{action:'buy', side:'up'|'down', prob:number, price:number, quantity:number, stakeUsd:number} | {action:'skip', reason:string}}
+ * Histeresis: berpindah ke sisi lawan dari order yang sedang terpasang butuh
+ * keyakinan tambahan (cfg.hysteresis), agar bot tidak bolak-balik karena noise.
+ *
+ * @returns {{action:'buy', side:'up'|'down', prob:number, price:number, quantity:number, stakeUsd:number, ask:number|null, edgeAtAsk:number|null, fillsNow:boolean} | {action:'skip', reason:string}}
  */
-export function decideOrderBook({ pUp, cfg, bankroll, exposureLeftUsd }) {
+export function decideOrderBook({ pUp, cfg, bankroll, exposureLeftUsd, feeRate = 0, currentSide = null, book = null }) {
   if (pUp === null || !Number.isFinite(pUp)) return { action: 'skip', reason: 'peluang tidak tersedia' };
   const side = pUp >= 0.5 ? 'up' : 'down';
   const prob = side === 'up' ? pUp : 1 - pUp;
 
   // Hanya trading bila model cukup yakin (hindari kondisi 50:50 yang rawan adverse selection)
-  if (prob < 0.5 + cfg.minEdge) return { action: 'skip', reason: `model belum yakin (p=${prob.toFixed(3)})` };
-  let price = floorCents(prob - cfg.minEdge);
+  let need = 0.5 + cfg.minEdge;
+  if (currentSide && currentSide !== side) need += cfg.hysteresis ?? 0;
+  if (prob < need) return { action: 'skip', reason: `model belum yakin (p=${prob.toFixed(3)})` };
+
+  let price = floorCents((prob - cfg.minEdge) / (1 + feeRate));
   price = Math.min(price, cfg.maxPrice);
   if (price < cfg.minPrice) return { action: 'skip', reason: `harga di bawah MIN_PRICE (p=${prob.toFixed(3)})` };
 
-  const kelly = kellyStakeUsd({ prob, price, bankroll, fraction: cfg.kellyFraction });
+  const ask = book?.[side]?.bestAsk ?? null;
+  const fillsNow = ask !== null && ask <= price;
+  const execPrice = fillsNow ? ask : price;
+  const edgeAtAsk = ask !== null ? prob - ask * (1 + feeRate) : null;
+
+  const kelly = kellyStakeUsd({ prob, price: Math.min(0.99, execPrice * (1 + feeRate)), bankroll, fraction: cfg.kellyFraction });
   const stakeUsd = Math.min(kelly, cfg.maxOrderUsd, Math.max(0, exposureLeftUsd));
   const quantity = Math.floor(stakeUsd / price);
   if (quantity < 1) {
     return { action: 'skip', reason: exposureLeftUsd <= 0 ? 'batas exposure tercapai' : `ukuran terlalu kecil ($${stakeUsd.toFixed(2)})` };
   }
-  return { action: 'buy', side, prob, price, quantity, stakeUsd: quantity * price };
+  return { action: 'buy', side, prob, price, quantity, stakeUsd: quantity * price, ask, edgeAtAsk, fillsNow };
+}
+
+/**
+ * Deteksi arbitrase complete set: beli 1 UP + 1 DOWN < $1 (setelah fee) lalu ditukar $1
+ * (autoBurn). Hanya memakai harga ask yang tersedia di kedua sisi.
+ * @returns {{costPerSet:number, profitPerSet:number}|null}
+ */
+export function completeSetArb(book, feeRate = 0) {
+  const a = book?.up?.bestAsk;
+  const b = book?.down?.bestAsk;
+  if (a === null || a === undefined || b === null || b === undefined) return null;
+  const cost = (a + b) * (1 + feeRate);
+  return cost < 1 ? { costPerSet: cost, profitPerSet: 1 - cost } : null;
 }
 
 /** Ambil ukuran pool per outcome dari market PARIMUTUEL (beberapa kemungkinan nama field). */

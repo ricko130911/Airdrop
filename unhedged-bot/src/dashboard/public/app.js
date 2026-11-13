@@ -26,7 +26,7 @@ const hhmmss = (t) => new Date(t).toLocaleTimeString('id-ID', { hour: '2-digit',
 function duration(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d ? `${d}h ${h}j ${m}m` : h ? `${h}j ${m}m` : `${m}m ${s % 60}d`;
+  return d ? `${d} hari ${h} jam` : h ? `${h} jam ${m} mnt` : `${m} mnt ${s % 60} dtk`;
 }
 function deltaHtml(x, text) {
   if (!isNum(x) || x === 0) return `<span class="delta">${esc(text)}</span>`;
@@ -201,7 +201,8 @@ function renderMarkets(s) {
     .map((m) => {
       const phase = phaseOf(m, s.config);
       const hasP = isNum(m.pUp);
-      const diff = isNum(m.spot) && isNum(m.strike) ? m.spot / m.strike - 1 : null;
+      const ref = m.twapKnown ? m.twapKnown.avg : m.spot;
+      const diff = isNum(ref) && isNum(m.strike) ? ref / m.strike - 1 : null;
       const order = m.order
         ? `<span class="chip"><i style="background:var(--${m.order.side === 'up' ? 'up' : 'down'})"></i>BID ${m.order.side.toUpperCase()} ${m.order.quantity} @ ${m.order.price.toFixed(2)}${m.order.dry ? ' · sim' : ''}</span>`
         : m.hasPosition
@@ -237,15 +238,33 @@ function renderMarkets(s) {
             : `<div class="empty" style="padding:4px 0">Model aktif saat sisa ≤ ${s.config.tradeWhenSecondsLeft} detik.</div>`
         }
         <div class="kv">
-          <div><div class="k">Spot</div><div class="v">${price(m.spot)}</div></div>
+          <div><div class="k">${m.twapKnown ? `Rata² ${m.twapKnown.count}s` : 'Spot'}</div><div class="v">${price(m.twapKnown ? m.twapKnown.avg : m.spot)}</div></div>
           <div><div class="k">Acuan</div><div class="v" title="${esc(m.strikeSource ?? '')}">${price(m.strike)}</div></div>
           <div><div class="k">Selisih</div><div class="v">${isNum(diff) ? (diff >= 0 ? '+' : '') + (diff * 100).toFixed(3) + '%' : '—'}</div></div>
         </div>
+        ${bookRow(m)}
         <div class="decision"><span>${esc(m.foreign ? 'Dilewati (ada order manual)' : m.decision ?? 'Menunggu window trading')}</span>${order}</div>
       </article>`;
     })
     .join('');
   tickRings();
+}
+
+/** Baris harga pasar (ask terbaik) + edge model setelah fee + tanda arbitrase. */
+function bookRow(m) {
+  const b = m.book;
+  if (!b) return '';
+  const fee = isNum(m.feeRate) ? m.feeRate : 0;
+  const cell = (side, label) => {
+    const ask = b[side]?.bestAsk;
+    const prob = isNum(m.pUp) ? (side === 'up' ? m.pUp : 1 - m.pUp) : null;
+    const edge = isNum(ask) && isNum(prob) ? prob - ask * (1 + fee) : null;
+    const edgeTxt = isNum(edge) ? `${edge >= 0 ? '+' : '−'}${Math.abs(edge * 100).toFixed(1)}¢` : '';
+    return `<div><div class="k"><i class="sw sw-${side}" style="width:8px;height:8px"></i> Ask ${esc(label)}</div>
+      <div class="v">${isNum(ask) ? ask.toFixed(2) : '—'} ${edgeTxt ? `<span class="edge ${edge >= 0 ? 'pos' : 'neg'}">${edgeTxt}</span>` : ''}</div></div>`;
+  };
+  const arb = m.arb ? `<div class="arb">◆ Arbitrase: UP+DOWN = $${m.arb.costPerSet.toFixed(3)} · untung ~$${m.arb.profitPerSet.toFixed(3)}/set</div>` : '';
+  return `<div class="kv kv2">${cell('up', 'UP')}${cell('down', 'DOWN')}<div><div class="k">Fee</div><div class="v">${(fee * 100).toFixed(1)}%</div></div></div>${arb}`;
 }
 
 function tickRings() {

@@ -10,37 +10,50 @@ Bot trading otomatis untuk market prediksi **"naik atau turun dalam 5 menit"** d
 
 ## Cara kerja ("pintar"-nya di mana?)
 
+### Aturan resolusi Unhedged (dari data market asli)
+
+> UP menang bila **rata-rata 60 harga penutupan per detik** sebelum market tutup
+> **≥ rata-rata 60 detik sebelum window dimulai** (harga acuan). Sumber: candle 1 detik
+> Binance (`BTCUSDT`, `ETHUSDT`, `SOLUSDT`); sumber CC dibaca dari data market-nya.
+> Harga sama persis dihitung **UP**.
+
 1. **Mencari market.** Setiap 30 detik bot membaca `/api/v1/feed` dan memilih market aktif
-   untuk BTC/ETH/SOL/CC yang berdurasi 5 menit dengan outcome Up/Down (atau Yes/No).
-2. **Mengambil harga aset secara real-time** dari Binance → Coinbase → data harga Unhedged
-   sendiri (CTM price-history). Untuk **CC (Canton Coin)** dipakai data harga Unhedged.
-3. **Menghitung peluang naik** dengan model probabilitas (random walk / Brownian motion):
+   `... Up or Down - 5 Min` untuk BTC/ETH/SOL/CC. Market 15 menit dan 1 jam diabaikan.
+2. **Membaca data resmi market:** sumber harga resolusi (`autoResolution.resolverConfig`),
+   **harga acuan resmi** (`priceReferences.start`), fee (`feeSchedule`), dan harga teratas
+   order book (`orderBookStats`). Data ini diperbarui setiap tick selama window trading.
+3. **Mengambil harga dari sumber yang sama dengan Unhedged** (Binance candle 1 detik untuk
+   BTC/ETH/SOL). Venue lain yang didukung: MEXC, Bybit, OKX, Gate, KuCoin.
+4. **Menghitung peluang UP dengan model rata-rata (TWAP):**
 
    ```
-   P(naik) = Φ( (ln(harga_sekarang / harga_acuan) + drift·τ) / (σ·√τ) )
+   rata²_akhir = (jumlah harga yang sudah terjadi + jumlah harga yang akan datang) / 60
+   P(UP) = Φ( (E[rata²_akhir] − harga_acuan) / SD[rata²_akhir] )
    ```
 
-   - `harga_acuan` = harga saat window 5 menit dibuka (atau strike dari data market)
-   - `σ` = volatilitas dari candle 1 menit terakhir (EWMA, data terbaru lebih berbobot)
-   - `τ` = sisa detik sampai market tutup
-   - `drift` = momentum 5 menit terakhir, diberi bobot kecil (`MOMENTUM_WEIGHT`)
-
-   Intinya: menjelang akhir window, selisih harga yang kecil pun sudah membuat hasil
-   cukup pasti, sementara harga di order book sering terlambat menyesuaikan. Di situlah edge-nya.
-4. **Hanya trading bila ada edge.** Bot memasang **limit BID** di sisi yang diunggulkan
-   pada harga `peluang_model − MIN_EDGE`. Order hanya terisi bila ada yang menjual
-   di harga itu atau lebih murah, sehingga setiap fill punya margin minimal `MIN_EDGE`.
-5. **Ukuran posisi memakai Kelly fraksional** (default ¼ Kelly), dibatasi `MAX_ORDER_USD`
+   - Dalam 60 detik terakhir, sebagian harga sudah **pasti** (diambil dari candle 1 detik),
+     jadi ketidakpastian menyusut cepat. Ini sumber utama edge.
+   - Harga mendatang dimodelkan sebagai random walk: varians rata-rata m detik yang dimulai
+     τ detik lagi ≈ σ²·(τ + (m+1)(2m+1)/(6m)).
+   - `σ` = volatilitas dari candle 1 menit (EWMA), dikali `SIGMA_MULTIPLIER` agar hati-hati.
+5. **Hanya trading bila ada edge setelah fee.** Harga BID maksimum dipilih agar
+   `peluang − harga − fee ≥ MIN_EDGE`. Fee dihitung konservatif: tarif taker × harga
+   (tier 0 = 5%). Bila ada penjual di harga itu atau lebih murah, order langsung terisi.
+6. **Ukuran posisi memakai Kelly fraksional** (default ¼ Kelly), dibatasi `MAX_ORDER_USD`
    dan `MAX_OPEN_EXPOSURE_USD`.
-6. **Order dinamis.** Harga order disesuaikan (`/orders/replace`) saat peluang bergeser,
-   dibatalkan bila sinyal hilang atau arah berbalik, dan **semua order dibatalkan**
-   `STOP_SECONDS_LEFT` detik sebelum market tutup.
-7. **Satu posisi per market.** Begitu order terisi, bot menahan posisi sampai selesai dan
+7. **Order dinamis dengan histeresis.** Harga order disesuaikan saat peluang bergeser.
+   Untuk pindah ke sisi lawan, model harus lebih yakin sebesar `HYSTERESIS`, supaya bot
+   tidak bolak-balik karena noise. Semua order dibatalkan `STOP_SECONDS_LEFT` detik sebelum tutup.
+8. **Satu posisi per market.** Begitu order terisi, bot menahan posisi sampai selesai dan
    tidak akan membeli sisi lawan.
-8. **Rem darurat.** Bila rugi hari ini (dari `/portfolio/me/equity`) mencapai
-   `MAX_DAILY_LOSS_USD`, bot berhenti trading dan membatalkan semua ordernya.
-9. **Evaluasi diri.** Setelah tiap market selesai, bot mencatat hasil, akurasi, **Brier score**
-   (kalibrasi model), dan PnL simulasi ke `logs/decisions.jsonl`.
+9. **Deteksi arbitrase complete set.** Bila ask UP + ask DOWN (setelah fee) < $1, bot
+   mencatat **PELUANG ARBITRASE** di log dan dashboard (karena 1 UP + 1 DOWN ditukar $1
+   lewat autoBurn). Saat ini hanya dideteksi, tidak dieksekusi otomatis.
+10. **Rem darurat.** Bila rugi hari ini mencapai `MAX_DAILY_LOSS_USD`, bot berhenti trading.
+11. **Simulasi realistis & evaluasi diri.** Di mode DRY_RUN, order baru dianggap terisi bila
+    order book Unhedged benar-benar punya ask ≤ harga order. PnL simulasi sudah dikurangi fee.
+    Hasil resmi dari Unhedged dipakai untuk menghitung akurasi dan **Brier score**
+    (`logs/decisions.jsonl`).
 
 Market tipe **PARIMUTUEL** (taruhan pool) juga didukung: bot menghitung payout dari ukuran
 pool dan hanya bertaruh bila expected value ≥ `MIN_EDGE`.
@@ -198,6 +211,8 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `STOP_SECONDS_LEFT` | `15` | Batalkan order saat sisa waktu ≤ ini |
 | `SIGMA_MULTIPLIER` | `1.3` | >1 = model lebih hati-hati (antisipasi lonjakan) |
 | `MOMENTUM_WEIGHT` | `0.2` | Bobot momentum (0 = abaikan) |
+| `HYSTERESIS` | `0.05` | Keyakinan tambahan untuk berpindah sisi (anti bolak-balik) |
+| `FEE_RATE` | kosong | Fee per kontrak (fraksi harga). Kosong = tarif taker dari data market |
 | `MARKET_REGEX` | kosong | Regex manual untuk memilih market bila deteksi otomatis gagal |
 | `DASHBOARD_PORT` | `3005` | Port dashboard web |
 | `DASHBOARD_HOST` | `0.0.0.0` | `0.0.0.0` = bisa diakses lewat IP VPS, `127.0.0.1` = hanya lokal/SSH tunnel |
@@ -216,12 +231,17 @@ tidak menemukan market:
 
 ## Keterbatasan yang perlu diketahui
 
-- **Oracle berbeda.** Unhedged menyelesaikan market dengan sumber harganya sendiri. Bot
-  memakai harga Binance/Coinbase, sehingga bisa ada selisih kecil. Ini sebabnya ada
-  `MIN_EDGE` dan `SIGMA_MULTIPLIER`.
-- **PnL simulasi optimis.** Di mode DRY_RUN, setiap order dianggap terisi. Kenyataannya
-  limit order belum tentu terisi, dan yang terisi cenderung yang "kurang bagus" (adverse selection).
-- **Fee** order book tidak dimodelkan secara eksplisit. Naikkan `MIN_EDGE` bila fee besar.
+- **Rumus fee belum pasti.** Dokumentasi menyebut fee order book memakai "risk-shaped curve".
+  Bot memakai perkiraan konservatif (tarif taker × harga). Setelah live, cek kolom `fee`
+  di riwayat trade dan sesuaikan `FEE_RATE` bila perlu.
+- **Simulasi tetap perkiraan.** Fill disimulasikan dari harga teratas order book yang dibaca
+  tiap ~4 detik. Kedalaman order book (jumlah kontrak di tiap harga) tidak diketahui, dan
+  order resting bisa terisi di antara dua pembacaan tanpa terdeteksi.
+- **Pasar bisa sangat efisien.** Contoh data asli: 97 detik sebelum tutup, UP sudah dihargai
+  0.97. Bila pemain lain sudah secepat ini, edge bisa sangat tipis atau tidak ada.
+- **Sumber harga CC.** Bot membaca venue CC dari data market. Bila venue-nya belum didukung,
+  log menampilkan "Harga CC tidak tersedia". Jalankan `node src/index.js discover --raw CC`
+  dan kirim hasilnya agar bisa ditambahkan.
 - Bot tidak menyentuh market yang sudah punya order manual milik Anda.
 
 ## Struktur kode

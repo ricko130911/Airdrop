@@ -5,14 +5,14 @@ import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
-import { discoverMarkets, extractStrike, marketText, marketType } from './markets.js';
+import { discoverMarkets, extractStrike, marketText, marketType, resolverInfo, bookTop, marketTakerFee } from './markets.js';
 
 const HELP = `Bot Unhedged Up/Down 5 menit
 
 Perintah:
   node src/index.js run        Jalankan bot (default DRY_RUN=true / simulasi)
   node src/index.js discover   Tampilkan market yang cocok & yang ditolak (beserta alasannya)
-                               Tambah --raw untuk melihat JSON mentah market pertama
+                               Tambah --raw [ASET] untuk melihat JSON mentah market (mis. --raw CC)
   node src/index.js status     Tampilkan saldo, equity, order terbuka, dan posisi (butuh API key)
 
 Konfigurasi lewat file .env (salin dari .env.example).`;
@@ -63,19 +63,25 @@ async function discover(api, cfg) {
     const m = a.market;
     const left = Math.round((a.window.endMs - Date.now()) / 1000);
     const strike = extractStrike(m);
+    const r = resolverInfo(m);
+    const b = bookTop(m, a.sides);
+    const f = (x) => (x === null || x === undefined ? '-' : x.toFixed(2));
     console.log(
-      `- [${a.asset}] ${m.question ?? m.title} | tipe=${marketType(m)} | tutup dalam ${left}s` +
-        ` | UP="${a.sides.up.label}" DOWN="${a.sides.down.label}"` +
-        ` | strike=${strike ? `${strike.value} (${strike.source})` : 'diambil dari harga saat open'}` +
-        ` | start dari ${a.window.startSource} | id=${m.id}`,
+      `- [${a.asset}] ${m.question ?? m.title} | tipe=${marketType(m)} | tutup dalam ${left}s | id=${m.id}\n` +
+        `    sumber resolusi: ${r.venue ?? '?'} ${r.symbol ?? '?'} (${r.method ?? '?'}) | fee taker ${(marketTakerFee(m) * 100).toFixed(1)}%\n` +
+        `    acuan: ${strike ? `${strike.value} (${strike.source})` : 'belum ada (window belum dimulai)'}\n` +
+        `    order book: UP bid ${f(b.up.bestBid)} / ask ${f(b.up.bestAsk)} · DOWN bid ${f(b.down.bestBid)} / ask ${f(b.down.bestAsk)}`,
     );
   }
   console.log(`\n=== DITOLAK, aset cocok (${rejected.length}) ===`);
   for (const r of rejected.slice(0, 40)) {
     console.log(`- [${r.asset}] ${marketText(r.market).slice(0, 120)} -> ${r.reason}`);
   }
-  if (process.argv.includes('--raw')) {
-    const sample = accepted[0]?.market ?? rejected[0]?.market;
+  const rawIdx = process.argv.indexOf('--raw');
+  if (rawIdx >= 0) {
+    // Opsional: --raw CC  -> tampilkan JSON market aset tertentu
+    const want = (process.argv[rawIdx + 1] ?? '').toUpperCase();
+    const sample = (want && accepted.find((a) => a.asset === want)?.market) ?? accepted[0]?.market ?? rejected[0]?.market;
     console.log('\n=== JSON mentah (contoh) ===');
     console.log(JSON.stringify(sample ?? null, null, 2));
   }

@@ -1,0 +1,92 @@
+{
+  "id": "cmweputvr2bil01mb1ds9gczn",
+  "slug": "1ds9gczn-btc-up-or-down-5-min",
+  "question": "BTC Up or Down - 5 Min",
+  "description": "5-minute Up or Down market.\n\nUP wins if the ending average is at or above the starting average. DOWN wins if it is below the starting average.\n\nThe ending average uses the 60 seconds before 08:40 UTC on November 13, 2026. The starting average uses the 60 seconds before the scheduled start.\n\nEach average uses 60 one-second closing prices. Seconds without trades carry the last available price forward. Confirmation is first attempted 10 seconds after each boundary; missing source data can delay it.\n\nResolution source: Binance BTCUSDT one-second candle closes.",
+  "status": "ACTIVE",
+  "category": "crypto",
+  "totalPool": "59.8",
+  "winningOutcome": null,
+  "endTime": "2026-11-13T08:40:00.000Z",
+  "scheduledResolutionTime": "2026-11-13T08:40:00.000Z",
+  "eventStartTime": null,
+  "outcomes": [
+    { "index": 0, "label": "Up", "engineId": "out_0" },
+    { "index": 1, "label": "Down", "engineId": "out_1" }
+  ],
+  "tags": ["btc"],
+  "timeWeightingEnabled": false,
+  "marketType": "ORDER_BOOK",
+  "platformFeeRate": "0.02",
+  "createdAt": "2026-11-13T08:30:00.135Z",
+  "engineMarketType": "default",
+  "feeSchedule": [
+    { "tier": 0, "makerFeeRate": "0.02", "takerFeeRate": "0.05" },
+    { "tier": 1, "makerFeeRate": "0.015", "takerFeeRate": "0.035" },
+    { "tier": 2, "makerFeeRate": "0.005", "takerFeeRate": "0.02" },
+    { "tier": 3, "makerFeeRate": "0", "takerFeeRate": "0.015" },
+    { "tier": 4, "makerFeeRate": "0", "takerFeeRate": "0.008" },
+    { "tier": 5, "makerFeeRate": "0", "takerFeeRate": "0" }
+  ],
+  "betCount": 0,
+  "orderBookStats": {
+    "totalVolume": "59.8",
+    "tradeCount": 10,
+    "lastPriceByOutcome": { "Up": "0.97", "Down": "0.03" },
+    "bestBidByOutcome": { "Up": "0.96" },
+    "bestAskByOutcome": {},
+    "effectiveBestBidByOutcome": { "Up": "0.96" },
+    "effectiveBestAskByOutcome": { "Down": "0.04" }
+  },
+  "liveEventData": null,
+  "autoResolution": {
+    "resolverType": "exchange-kline",
+    "resolverConfig": {
+      "type": "binary",
+      "asset": "BTC",
+      "venue": "binance",
+      "symbol": "BTCUSDT",
+      "interval": "1s",
+      "threshold": 68714.62416666666,
+      "quoteAsset": "USDT",
+      "priceMethod": "twap-60s-v1",
+      "priceSource": "exchange-kline",
+      "aboveOutcome": 0,
+      "belowOutcome": 1,
+      "windowStartTime": "2026-11-13T08:35:00.000Z",
+      "averagingSeconds": 60,
+      "endObservationId": "5467b79e-d1a4-4800-b830-c7bd06550d23",
+      "startObservationId": "f050cc4f-f3fc-4c5c-8afe-0ec858abf05e"
+    },
+    "autoResolveEnabled": true
+  },
+  "priceReferences": {
+    "method": "twap-60s-v1",
+    "start": {
+      "id": "f050cc4f-f3fc-4c5c-8afe-0ec858abf05e",
+      "asset": "BTC",
+      "source": "binance-1s-klines",
+      "status": "final",
+      "priceUsd": "68714.624166666666666666666666666667",
+      "provisionalPriceUsd": "68714.624166666666666666666666666667",
+      "provisionalAt": "2026-11-13T08:35:02.283Z",
+      "windowStart": "2026-11-13T08:34:00.000Z",
+      "boundaryAt": "2026-11-13T08:35:00.000Z",
+      "finalizedAt": "2026-11-13T08:35:11.255Z",
+      "samples": []
+    },
+    "end": {
+      "id": "5467b79e-d1a4-4800-b830-c7bd06550d23",
+      "asset": "BTC",
+      "source": "binance-1s-klines",
+      "status": "pending",
+      "priceUsd": null,
+      "provisionalPriceUsd": null,
+      "provisionalAt": null,
+      "windowStart": "2026-11-13T08:39:00.000Z",
+      "boundaryAt": "2026-11-13T08:40:00.000Z",
+      "finalizedAt": null,
+      "samples": []
+    }
+  }
+}

@@ -431,3 +431,15 @@ h2::before {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Harga pasar, edge & arbitrase */
+.kv2 .k { display: flex; align-items: center; gap: 6px; }
+.edge { font-size: 11px; font-weight: 600; margin-left: 4px; color: var(--text-secondary); }
+.edge.pos::before { content: '▲ '; color: var(--good); font-size: 9px; }
+.edge.neg::before { content: '▼ '; color: var(--critical); font-size: 9px; }
+.arb {
+  font-size: 12px; font-weight: 600; color: var(--gold-1);
+  padding: 8px 12px; border-radius: 10px;
+  border: 1px solid rgba(216, 183, 101, 0.5);
+  background: rgba(216, 183, 101, 0.08);
+}
