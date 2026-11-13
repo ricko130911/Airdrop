@@ -61,6 +61,12 @@ export function loadConfig() {
     // Fee per kontrak (fraksi harga). Kosong = pakai tarif taker tier 0 dari data market (5%)
     feeRate: num('FEE_RATE', null),
 
+    // Pembelajaran dari hasil sendiri
+    adaptive: bool('ADAPTIVE', true),
+    adaptiveMinTrades: num('ADAPTIVE_MIN_TRADES', 25),
+    calibrationMinSamples: num('CALIBRATION_MIN_SAMPLES', 40),
+    probeTrades: bool('PROBE_TRADES', true),
+
     marketDurationSec: num('MARKET_DURATION_SEC', 300),
     marketRegex: str('MARKET_REGEX'),
     feedCategory: str('FEED_CATEGORY'),

@@ -5,6 +5,8 @@ import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
+import { Learner, loadRecords } from './analytics.js';
+import path from 'node:path';
 import { discoverMarkets, extractStrike, marketText, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 
 const HELP = `Bot Unhedged Up/Down 5 menit
@@ -14,6 +16,7 @@ Perintah:
   node src/index.js discover   Tampilkan market yang cocok & yang ditolak (beserta alasannya)
                                Tambah --raw [ASET] untuk melihat JSON mentah market (mis. --raw CC)
   node src/index.js check      Cek koneksi ke sumber harga resmi (Binance, Bybit) dari server ini
+  node src/index.js analyze    Analisis hasil: untung/rugi per zona waktu & aset, kalibrasi model
   node src/index.js status     Tampilkan saldo, equity, order terbuka, dan posisi (butuh API key)
 
 Konfigurasi lewat file .env (salin dari .env.example).`;
@@ -31,6 +34,7 @@ async function main() {
 
   if (cmd === 'discover') return discover(api, cfg);
   if (cmd === 'check') return check(api, cfg, log);
+  if (cmd === 'analyze') return analyze(cfg);
   if (cmd === 'status') return status(api);
   if (cmd !== 'run') {
     console.log(HELP);
@@ -92,6 +96,51 @@ async function discover(api, cfg) {
       '\nTidak ada market yang cocok. Jalankan dengan --raw untuk melihat format market, lalu atur MARKET_REGEX / FEED_CATEGORY di .env.',
     );
   }
+}
+
+/** Analisis hasil bot dari logs/decisions.jsonl: di mana bot untung/rugi & seberapa tepat modelnya. */
+function analyze(cfg) {
+  const file = process.argv[3] ?? path.join(cfg.logDir, 'decisions.jsonl');
+  const L = new Learner({
+    enabled: cfg.adaptive,
+    minZoneTrades: cfg.adaptiveMinTrades,
+    minCalibrationSamples: cfg.calibrationMinSamples,
+  });
+  L.addRecords(loadRecords(file));
+  const r = L.report();
+  const pct = (x, d = 1) => (x === null || x === undefined ? '-' : (x * 100).toFixed(d) + '%');
+  const usd = (x) => (x >= 0 ? '+$' : '-$') + Math.abs(x).toFixed(2);
+  const row = (g, label) =>
+    `${String(label ?? g.key).padEnd(9)} ${String(g.n).padStart(5)}  ${pct(g.winrate).padStart(7)}  ${pct(g.breakeven).padStart(7)}  ${usd(g.pnl).padStart(9)}  ${pct(g.roi).padStart(7)}${g.blocked ? '  DIBLOKIR' : ''}`;
+  const head = `${'zona'.padEnd(9)} ${'trade'.padStart(5)}  ${'menang'.padStart(7)}  ${'impas'.padStart(7)}  ${'PnL'.padStart(9)}  ${'ROI'.padStart(7)}`;
+
+  console.log(`\nFile: ${file}`);
+  console.log(`Market selesai: ${r.markets} | trade: ${r.total.n} | PnL ${usd(r.total.pnl)} | ROI ${pct(r.total.roi)} | menang ${pct(r.total.winrate)} vs impas ${pct(r.total.breakeven)}`);
+  if (!r.markets) {
+    console.log('\nBelum ada data versi baru. Biarkan bot berjalan dulu.');
+    return;
+  }
+  console.log('\n== Menurut sisa waktu saat order terisi ==');
+  console.log(head);
+  for (const g of r.byTime) console.log(row(g));
+  console.log('\n== Menurut aset ==');
+  console.log(head);
+  for (const g of r.byAsset) console.log(row(g));
+  console.log('\n== Menurut keyakinan model saat terisi (kalibrasi trade) ==');
+  console.log(`${head}  ${'p rata2'.padStart(8)}`);
+  for (const g of r.byProb) console.log(`${row(g)}  ${pct(g.avgProb).padStart(8)}`);
+  console.log('\n== Kalibrasi peluang per titik waktu (semua market) ==');
+  console.log(`${'titik'.padEnd(7)} ${'sampel'.padStart(6)}  ${'k'.padStart(5)}  ${'Brier mentah'.padStart(12)}  ${'Brier kalibrasi'.padStart(15)}  status`);
+  for (const c of r.calibration) {
+    const b = (x) => (x === null || x === undefined ? '-' : x.toFixed(4));
+    console.log(
+      `${(c.checkpoint + 's').padEnd(7)} ${String(c.n).padStart(6)}  ${c.k.toFixed(2).padStart(5)}  ${b(c.brierRaw).padStart(12)}  ${b(c.brierCal).padStart(15)}  ${c.active ? 'AKTIF' : `menunggu ${r.minCalibrationSamples} sampel`}`,
+    );
+  }
+  console.log(
+    '\nCara membaca: "menang" harus di atas "impas" agar untung. k < 1 = model terlalu yakin (dikoreksi), k > 1 = kurang yakin.' +
+      `\nZona dengan >= ${r.minZoneTrades} trade dan ROI negatif otomatis DIBLOKIR (hanya order probe 1 kontrak).`,
+  );
 }
 
 /** Cek apakah sumber harga resmi tiap aset bisa diakses dari server ini. */

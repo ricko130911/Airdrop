@@ -58,6 +58,46 @@ Bot trading otomatis untuk market prediksi **"naik atau turun dalam 5 menit"** d
 Market tipe **PARIMUTUEL** (taruhan pool) juga didukung: bot menghitung payout dari ukuran
 pool dan hanya bertaruh bila expected value ≥ `MIN_EDGE`.
 
+## Bot belajar dari hasilnya sendiri
+
+Setiap market yang selesai dicatat ke `logs/decisions.jsonl`, termasuk **detail saat order terisi**
+(sisa detik, peluang model, harga ask, edge setelah fee). Dari data itu bot belajar dua hal:
+
+1. **Kalibrasi peluang.** Di sisa 150, 90, 45, dan 20 detik, bot mencatat peluang mentah model
+   untuk *setiap* market, baik yang ditradingkan maupun tidak. Setelah ada ≥ `CALIBRATION_MIN_SAMPLES`
+   market, bot menghitung faktor koreksi **k** per titik waktu:
+   - **k < 1**: model terlalu yakin, jadi peluang ditarik ke arah 50%.
+   - **k > 1**: model kurang yakin, jadi peluang dipertegas.
+
+   Keputusan trading memakai peluang yang sudah dikoreksi.
+2. **Zona rugi.** Trade dikelompokkan menurut sisa waktu saat terisi (0-30s, 30-60s, ...) dan menurut
+   aset. Zona yang 60 trade terakhirnya **rugi secara konsisten** (minimal `ADAPTIVE_MIN_TRADES` trade)
+   otomatis diblokir. Di zona itu bot hanya mengirim order **probe 1 kontrak**, dan zona dibuka lagi
+   bila hasilnya membaik.
+
+Riwayat dimuat ulang saat bot dijalankan, jadi statistik dan pembelajaran **tidak hilang saat restart**.
+
+Lihat hasilnya di panel **Pembelajaran Bot** pada dashboard, atau di terminal:
+
+```bash
+node src/index.js analyze
+```
+
+Contoh keluaran:
+
+```
+== Menurut sisa waktu saat order terisi ==
+zona      trade   menang    impas        PnL      ROI
+0-30s        12    91.7%    57.4%    +$28.34    59.5%
+60-90s       39    56.4%    59.2%    -$10.95    -7.3%  DIBLOKIR
+```
+
+Kolom **menang** harus di atas **impas** (harga beli rata-rata + fee) agar untung.
+
+> Catatan: pembelajaran butuh data. Dengan sedikit trade, hasil per zona masih sangat dipengaruhi
+> keberuntungan; karena itu ada batas minimal sampel sebelum kalibrasi aktif atau zona diblokir.
+> Set `ADAPTIVE=false` untuk mematikan semua penyesuaian otomatis.
+
 ## Kebutuhan
 
 - **Node.js 20+** (tidak butuh `npm install`, tanpa dependensi eksternal)
@@ -78,6 +118,9 @@ npm start
 
 # Cek koneksi ke sumber harga resmi (Binance & Bybit) dari server ini
 node src/index.js check
+
+# Analisis hasil: untung/rugi per zona waktu & aset, kalibrasi model
+node src/index.js analyze
 
 # 3) Cek saldo, order, dan posisi (butuh API key)
 npm run status
@@ -216,6 +259,10 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `MOMENTUM_WEIGHT` | `0.2` | Bobot momentum (0 = abaikan) |
 | `HYSTERESIS` | `0.05` | Keyakinan tambahan untuk berpindah sisi (anti bolak-balik) |
 | `FEE_RATE` | kosong | Fee per kontrak (fraksi harga). Kosong = tarif taker dari data market |
+| `ADAPTIVE` | `true` | Kalibrasi peluang otomatis + blokir zona yang terbukti rugi |
+| `ADAPTIVE_MIN_TRADES` | `25` | Minimal trade per zona sebelum zona boleh diblokir |
+| `CALIBRATION_MIN_SAMPLES` | `40` | Minimal market per titik waktu sebelum kalibrasi aktif |
+| `PROBE_TRADES` | `true` | Di zona yang diblokir tetap kirim order 1 kontrak untuk belajar |
 | `MARKET_REGEX` | kosong | Regex manual untuk memilih market bila deteksi otomatis gagal |
 | `DASHBOARD_PORT` | `3005` | Port dashboard web |
 | `DASHBOARD_HOST` | `0.0.0.0` | `0.0.0.0` = bisa diakses lewat IP VPS, `127.0.0.1` = hanya lokal/SSH tunnel |
@@ -253,7 +300,8 @@ tidak menemukan market:
 src/
   index.js     CLI: run / discover / status
   bot.js       Loop utama, eksekusi order, manajemen risiko, evaluasi
-  model.js     Model probabilitas, volatilitas, drift, Kelly
+  model.js     Model probabilitas (TWAP 60 detik), volatilitas, drift, Kelly
+  analytics.js Pembelajaran: kalibrasi peluang, zona rugi, ringkasan hasil
   strategy.js  Keputusan beli/lewati (fungsi murni)
   markets.js   Pencarian & parsing market dari feed
   prices.js    Sumber harga (Binance, Coinbase, Unhedged)

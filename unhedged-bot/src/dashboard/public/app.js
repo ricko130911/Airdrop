@@ -114,6 +114,7 @@ function render(s) {
   renderPnl(s);
   renderParams(s);
   renderHistory(s);
+  renderLearning(s);
   renderLogs(s);
   $('#uptime').textContent = 'Uptime ' + duration(s.now - s.startedAt);
 }
@@ -432,6 +433,58 @@ function renderParams(s) {
   $('#params').innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
 }
 
+/** Meter win rate dengan penanda titik impas (bar tunggal + garis penanda). */
+function winMeter(g) {
+  if (!g.n) return '<span class="muted-txt">belum ada</span>';
+  const w = Math.max(0, Math.min(1, g.winrate));
+  const b = Math.max(0, Math.min(1, g.breakeven ?? 0));
+  const above = g.winrate >= g.breakeven;
+  return `<div class="wm" role="img" aria-label="Menang ${pct(g.winrate)}, impas ${pct(g.breakeven)}">
+      <div class="wm-track"><span class="wm-fill" style="width:${(w * 100).toFixed(1)}%"></span><i class="wm-mark" style="left:${(b * 100).toFixed(1)}%"></i></div>
+      <div class="wm-txt"><b>${pct(g.winrate, 0)}</b> <span class="muted-txt">/ impas ${pct(g.breakeven, 0)}</span> <span class="ic ${above ? 'pos' : 'neg'}" aria-hidden="true">${above ? '▲' : '▼'}</span></div>
+    </div>`;
+}
+
+function learnRows(groups) {
+  return groups
+    .map((g) => {
+      const status = g.blocked
+        ? '<span class="st st-bad"><i aria-hidden="true">■</i> Diblokir</span>'
+        : g.n
+          ? '<span class="st st-ok"><i aria-hidden="true">●</i> Aktif</span>'
+          : '<span class="muted-txt">—</span>';
+      const mobileTag = g.blocked ? '<div class="st st-bad only-mobile"><i aria-hidden="true">■</i> Diblokir</div>' : '';
+      return `<tr><td class="nowrap">${esc(g.key)}${mobileTag}</td><td class="num">${g.n}</td><td>${winMeter(g)}</td><td class="num">${g.n ? deltaHtml(g.pnl, money(g.pnl, { sign: true })) : '—'}</td><td>${status}</td></tr>`;
+    })
+    .join('');
+}
+
+function renderLearning(s) {
+  const L = s.learning;
+  if (!L) return;
+  $('#learnNote').textContent = L.enabled
+    ? `${L.markets} market · ${L.total.n} trade · ROI ${pct(L.total.roi)}`
+    : 'Pembelajaran dimatikan (ADAPTIVE=false)';
+  $('#learnTime').innerHTML = learnRows(L.byTime);
+  $('#learnAsset').innerHTML = L.byAsset.length ? learnRows(L.byAsset) : `<tr><td colspan="5" class="muted-txt">Belum ada trade.</td></tr>`;
+  $('#learnCalib').innerHTML = L.calibration
+    .map((c) => {
+      const state = c.active
+        ? c.k < 0.95
+          ? 'terlalu yakin → dikoreksi'
+          : c.k > 1.05
+            ? 'kurang yakin → dipertegas'
+            : 'sudah tepat'
+        : `mengumpulkan data ${c.n}/${L.minCalibrationSamples}`;
+      return `<div class="calib-item ${c.active ? 'on' : ''}">
+        <div class="k">Sisa ${c.checkpoint} dtk</div>
+        <div class="v">${c.active ? 'k = ' + c.k.toFixed(2) : '—'}</div>
+        <div class="d">${esc(state)}</div>
+      </div>`;
+    })
+    .join('');
+}
+
 function renderHistory(s) {
   const rows = s.history.slice(-40).reverse();
   $('#histNote').textContent = rows.length ? `${s.history.length} market selesai` : '—';
@@ -444,7 +497,9 @@ function renderHistory(s) {
       const res = `<span class="res"><i style="background:var(--${h.outcome})"></i>${h.outcome === 'up' ? 'UP' : 'DOWN'}</span>`;
       const predSide = h.pUp >= 0.5 ? 'UP' : 'DOWN';
       const pred = `${predSide} ${pct(Math.max(h.pUp, 1 - h.pUp), 0)} ${h.correct ? '✓' : '✗'}`;
-      const pos = h.trade ? `${h.trade.side.toUpperCase()} ${Math.round(h.trade.quantity)} @ ${h.trade.price.toFixed(2)}` : '—';
+      const pos = h.trade
+        ? `${h.trade.side.toUpperCase()} ${Math.round(h.trade.quantity)} @ ${h.trade.price.toFixed(2)}${isNum(h.trade.secondsLeft) ? ` · sisa ${h.trade.secondsLeft}s` : ''}${h.trade.probe ? ' · probe' : ''}`
+        : '—';
       const pnl = h.trade ? deltaHtml(h.trade.pnl, money(h.trade.pnl, { sign: true })) : '—';
       return `<tr><td>${hhmm(h.endMs)}</td><td>${esc(h.asset)}</td><td>${res}</td><td>${esc(pred)}</td><td>${esc(pos)}</td><td class="num">${pnl}</td></tr>`;
     })

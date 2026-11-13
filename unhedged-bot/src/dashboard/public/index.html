@@ -109,6 +109,40 @@
       </div>
     </section>
 
+    <section class="card" aria-labelledby="hLearn">
+      <div class="section-head tight">
+        <h2 id="hLearn">Pembelajaran Bot</h2>
+        <span class="section-note" id="learnNote">—</span>
+      </div>
+      <div class="learn-grid">
+        <div>
+          <div class="sub-head">Hasil menurut sisa waktu saat order terisi</div>
+          <div class="table-wrap short">
+            <table class="table compact">
+              <thead><tr><th>Zona</th><th class="num">Trade</th><th>Menang vs impas</th><th class="num">PnL</th><th>Status</th></tr></thead>
+              <tbody id="learnTime"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="sub-head">Hasil menurut aset</div>
+          <div class="table-wrap short">
+            <table class="table compact">
+              <thead><tr><th>Aset</th><th class="num">Trade</th><th>Menang vs impas</th><th class="num">PnL</th><th>Status</th></tr></thead>
+              <tbody id="learnAsset"></tbody>
+            </table>
+          </div>
+          <div class="sub-head" style="margin-top:16px">Kalibrasi peluang model</div>
+          <div class="calib" id="learnCalib"></div>
+        </div>
+      </div>
+      <p class="learn-help">
+        Garis tipis = win rate minimum agar impas (harga beli + fee). Zona yang hasil 60 trade terakhirnya
+        <b>rugi secara konsisten</b> otomatis diblokir: bot hanya mengirim order percobaan 1 kontrak di sana,
+        dan zona dibuka lagi bila hasilnya membaik. Kalibrasi <b>k &lt; 1</b> berarti model terlalu yakin dan dikoreksi otomatis.
+      </p>
+    </section>
+
     <section class="card" aria-labelledby="hHistory">
       <div class="section-head tight">
         <h2 id="hHistory">Riwayat Market</h2>

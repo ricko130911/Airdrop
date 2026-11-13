@@ -1,6 +1,8 @@
 import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, brier } from './model.js';
 import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb } from './strategy.js';
+import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
+import path from 'node:path';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmt = (x, d = 3) => (x === null || x === undefined || !Number.isFinite(x) ? '-' : x.toFixed(d));
@@ -31,12 +33,38 @@ export class Bot {
     this.history = []; // market yang sudah selesai (untuk dashboard)
     this.account = { available: null, total: null, lockedEngine: null, username: null };
     this.lastPriceRefresh = 0;
+    // Pembelajaran dari hasil sendiri: kalibrasi peluang + deteksi zona rugi
+    this.learner = new Learner({
+      enabled: cfg.adaptive !== false,
+      minZoneTrades: cfg.adaptiveMinTrades ?? 25,
+      minCalibrationSamples: cfg.calibrationMinSamples ?? 40,
+    });
+  }
+
+  /** Muat riwayat dari logs/decisions.jsonl agar statistik & pembelajaran tidak hilang saat restart. */
+  loadHistory() {
+    const file = path.join(this.cfg.logDir ?? 'logs', 'decisions.jsonl');
+    try {
+      const records = settleRecords(loadRecords(file));
+      this.learner.addRecords(records);
+      for (const r of records) this.applySettleRecord(r);
+      if (records.length) {
+        const rep = this.learner.report();
+        this.log.info(
+          `Riwayat dimuat: ${records.length} market, ${rep.total.n} trade, PnL $${rep.total.pnl.toFixed(2)}` +
+            ` | kalibrasi aktif: ${rep.calibration.filter((c) => c.active).map((c) => `${c.checkpoint}s(k=${c.k.toFixed(2)})`).join(', ') || 'belum (data kurang)'}`,
+        );
+      }
+    } catch (e) {
+      this.log.warn(`Gagal memuat riwayat: ${e.message}`);
+    }
   }
 
   // ------------------------------------------------------------------ lifecycle
 
   async start() {
     const c = this.cfg;
+    this.loadHistory();
     this.log.info(
       `Bot mulai | mode=${this.live ? 'LIVE' : 'DRY-RUN (simulasi)'} | aset=${c.assets.join(',')} | maxOrder=$${c.maxOrderUsd} | minEdge=${c.minEdge} | trade saat sisa<=${c.tradeWhenSecondsLeft}s`,
     );
@@ -196,10 +224,12 @@ export class Bot {
       const o = byId.get(entry.order.id);
       if (!o) {
         this.log.info(`[${entry.asset}] order #${entry.order.id} sudah tidak terbuka (terisi). Posisi ditahan sampai market selesai.`);
+        if (entry.paper && !entry.paper.fill) entry.paper.fill = this.fillInfo(entry, entry.paper.side, entry.paper.price);
         entry.order = null;
         entry.hasPosition = true;
       } else if (Number(o.cum_quantity ?? 0) > 0 && !entry.hasPosition) {
         this.log.info(`[${entry.asset}] order #${entry.order.id} terisi sebagian (${o.cum_quantity}/${o.quantity}).`);
+        if (entry.paper && !entry.paper.fill) entry.paper.fill = this.fillInfo(entry, entry.paper.side, entry.paper.price);
         entry.hasPosition = true;
       }
     }
@@ -287,10 +317,14 @@ export class Bot {
     if (ask === null || ask > o.price) return;
     const fill = Math.min(ask, o.price);
     const fee = (entry.feeRate ?? 0) * fill * o.quantity;
-    entry.paper = { side: o.side, price: fill, quantity: o.quantity, fee };
+    entry.paper = { side: o.side, price: fill, quantity: o.quantity, fee, probe: !!o.probe, fill: this.fillInfo(entry, o.side, fill) };
     entry.hasPosition = true;
     entry.order = null;
-    this.log.info(`[DRY] ${tag} order TERISI: ${o.side.toUpperCase()} ${o.quantity} @ ${fill.toFixed(2)} (fee ~$${fee.toFixed(2)})`);
+    const f = entry.paper.fill;
+    this.log.info(
+      `[DRY] ${tag} order TERISI: ${o.side.toUpperCase()} ${o.quantity} @ ${fill.toFixed(2)} (fee ~$${fee.toFixed(2)})` +
+        ` | sisa ${f.secondsLeft}s, p=${fmt(f.prob)}, edge ${f.edge !== null ? (f.edge * 100).toFixed(1) + '¢' : '-'}${o.probe ? ' [PROBE]' : ''}`,
+    );
   }
 
   async handleMarket(entry, secondsLeft) {
@@ -315,7 +349,16 @@ export class Bot {
       this.log.debug(`${tag} lewati: ${est.reason}`);
       return;
     }
-    entry.lastEval = { pUp: est.pUp, secondsLeft, spot: est.spot, sigma: est.sigma, knownAvg: est.knownAvg, knownCount: est.knownCount, at: Date.now() };
+    // Catat peluang mentah di titik-titik waktu tetap (bahan kalibrasi, untuk SEMUA market)
+    entry.checkpoints ??= [];
+    for (const c of CHECKPOINTS) {
+      if (secondsLeft <= c && secondsLeft > c - 30 && !entry.checkpoints.some((x) => x.s === c)) {
+        entry.checkpoints.push({ s: c, pUp: est.pUp, at: Math.round(secondsLeft) });
+      }
+    }
+    const pUpRaw = est.pUp;
+    est.pUp = this.learner.calibrate(pUpRaw, secondsLeft);
+    entry.lastEval = { pUp: est.pUp, pUpRaw, secondsLeft, spot: est.spot, sigma: est.sigma, knownAvg: est.knownAvg, knownCount: est.knownCount, at: Date.now() };
 
     if (this.halted) {
       entry.lastDecision = `dihentikan: ${this.halted}`;
@@ -333,7 +376,8 @@ export class Bot {
     const exposureLeftUsd = this.cfg.maxOpenExposureUsd - this.exposureUsd() + (entry.order ? entry.order.price * entry.order.quantity : 0);
     const bankroll = this.bankroll ?? 0;
     const twapInfo = est.knownCount ? ` twap60=${fmt(est.knownAvg, 4)}(${est.knownCount}s)` : '';
-    const info = `spot=${fmt(est.spot, 4)} acuan=${fmt(entry.strike.value, 4)}${twapInfo} pUp=${fmt(est.pUp)}`;
+    const calInfo = Math.abs(est.pUp - pUpRaw) > 0.005 ? ` (mentah ${fmt(pUpRaw)})` : '';
+    const info = `spot=${fmt(est.spot, 4)} acuan=${fmt(entry.strike.value, 4)}${twapInfo} pUp=${fmt(est.pUp)}${calInfo}`;
 
     if (entry.type === 'PARIMUTUEL') {
       const pools = parimutuelPools(m, entry.sides);
@@ -354,7 +398,8 @@ export class Bot {
       return;
     }
 
-    const d = decideOrderBook({
+    const zone = this.learner.zoneVerdict(entry.asset, secondsLeft);
+    let d = decideOrderBook({
       pUp: est.pUp,
       cfg: this.cfg,
       bankroll,
@@ -363,9 +408,13 @@ export class Bot {
       currentSide: entry.order?.side ?? null,
       book: entry.book,
     });
+    if (d.action === 'buy' && zone.blocked) {
+      // Zona terbukti rugi: hanya kirim order "probe" 1 kontrak (atau lewati) agar tetap bisa belajar
+      d = this.cfg.probeTrades !== false ? { ...d, quantity: 1, stakeUsd: d.price, probe: true, probeReason: zone.reason } : { action: 'skip', reason: zone.reason };
+    }
     entry.lastDecision =
       d.action === 'buy'
-        ? `bid ${d.side.toUpperCase()} @ ${d.price.toFixed(2)}${d.ask !== null ? ` · ask ${d.ask.toFixed(2)}` : ' · belum ada penjual'}`
+        ? `bid ${d.side.toUpperCase()} @ ${d.price.toFixed(2)}${d.ask !== null ? ` · ask ${d.ask.toFixed(2)}` : ' · belum ada penjual'}${d.probe ? ` · probe (${d.probeReason})` : ''}`
         : d.reason;
     if (d.action !== 'buy') {
       this.log.debug(`${tag} ${info} -> skip: ${d.reason}`);
@@ -398,12 +447,12 @@ export class Bot {
   async placeOrder(entry, d, tag, info) {
     const outcome = this.outcomeParam(entry, d.side);
     const priceStr = d.price.toFixed(2);
-    const msg = `${tag} ${info} -> BELI ${d.side.toUpperCase()} (${entry.sides[d.side].label}) ${d.quantity} kontrak @ ${priceStr} (~$${d.stakeUsd.toFixed(2)}, p=${fmt(d.prob)})`;
+    const msg = `${tag} ${info} -> BELI ${d.side.toUpperCase()} (${entry.sides[d.side].label}) ${d.quantity} kontrak @ ${priceStr} (~$${d.stakeUsd.toFixed(2)}, p=${fmt(d.prob)})${d.probe ? ' [PROBE]' : ''}`;
     this.log.journal({ kind: 'order', live: this.live, marketId: entry.market.id, asset: entry.asset, ...d, strike: entry.strike, secondsLeft: entry.lastEval?.secondsLeft });
 
     if (!this.live) {
       this.log.info(`[DRY] ${msg}`);
-      entry.order = { id: `dry-${Date.now()}`, side: d.side, outcome, price: d.price, quantity: d.quantity, dry: true };
+      entry.order = { id: `dry-${Date.now()}`, side: d.side, outcome, price: d.price, quantity: d.quantity, dry: true, probe: !!d.probe };
       return;
     }
 
@@ -418,9 +467,10 @@ export class Bot {
         quantity: d.quantity,
       });
       const o = res?.order ?? {};
-      entry.order = { id: String(o.id), side: d.side, outcome, price: d.price, quantity: d.quantity };
-      entry.paper = { side: d.side, price: d.fillsNow ? d.ask : d.price, quantity: d.quantity, fee: (entry.feeRate ?? 0) * d.price * d.quantity };
-      this.stats.trades++;
+      entry.order = { id: String(o.id), side: d.side, outcome, price: d.price, quantity: d.quantity, probe: !!d.probe };
+      const px = d.fillsNow ? d.ask : d.price;
+      entry.paper = { side: d.side, price: px, quantity: d.quantity, fee: (entry.feeRate ?? 0) * px * d.quantity, probe: !!d.probe };
+      if (d.fillsNow) entry.paper.fill = this.fillInfo(entry, d.side, px);
       this.log.info(`${tag} order #${o.id} status=${o.status}`);
     } catch (e) {
       this.log.error(`${tag} gagal pasang order: ${e.message}`);
@@ -514,7 +564,6 @@ export class Bot {
       });
       entry.bet = { side: d.side, stake: d.stake };
       entry.paper = { side: d.side, price: 1 / d.payout, quantity: d.stake * d.payout, prob: d.prob };
-      this.stats.trades++;
       this.log.info(`${tag} bet ${res?.bet?.id} status=${res?.bet?.status}`);
     } catch (e) {
       this.log.error(`${tag} gagal taruh bet: ${e.message}`);
@@ -555,46 +604,86 @@ export class Bot {
       source = 'hitung-sendiri';
     }
 
-    const s = this.stats;
-    s.settled++;
-    s.scored++;
-    s.brierSum += brier(entry.lastEval.pUp, outcomeUp);
-    if ((entry.lastEval.pUp >= 0.5 ? 1 : 0) === outcomeUp) s.correct++;
-    let tradeNote = '';
-    let trade = null;
-    // Live: hanya laporkan bila order benar-benar terisi (posisi terdeteksi) atau bet masuk
-    if (entry.paper && (!this.live || entry.hasPosition || entry.bet)) {
-      const won = (entry.paper.side === 'up' ? 1 : 0) === outcomeUp;
-      const fee = entry.paper.fee ?? 0;
-      const pnl = (won ? entry.paper.quantity * (1 - entry.paper.price) : -entry.paper.quantity * entry.paper.price) - fee;
-      if (!this.live) {
-        s.paperPnl += pnl;
-        if (won) s.wins++;
-        s.trades++;
-      }
-      trade = { side: entry.paper.side, price: entry.paper.price, quantity: entry.paper.quantity, won, pnl };
-      tradeNote = ` | posisi ${entry.paper.side.toUpperCase()} ${won ? 'MENANG' : 'KALAH'} ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-    }
-    this.history.push({
-      ts: Date.now(),
-      endMs: entry.window.endMs,
+    // Live: posisi hanya dihitung bila order benar-benar terisi (posisi terdeteksi) atau bet masuk
+    const paper = entry.paper && (!this.live || entry.hasPosition || entry.bet) ? entry.paper : null;
+    const record = {
+      kind: 'settle',
+      v: RECORD_VERSION,
+      ts: new Date().toISOString(),
       marketId: entry.market.id,
       asset: entry.asset,
       question: entry.market.question ?? entry.market.title ?? '',
-      outcome: outcomeUp ? 'up' : 'down',
+      endMs: entry.window.endMs,
+      outcomeUp,
       source,
-      pUp: entry.lastEval.pUp,
-      correct: (entry.lastEval.pUp >= 0.5 ? 1 : 0) === outcomeUp,
-      trade,
-    });
-    if (this.history.length > 500) this.history.shift();
-    this.log.journal({ kind: 'settle', marketId: entry.market.id, asset: entry.asset, outcomeUp, source, lastEval: entry.lastEval, paper: entry.paper });
+      strike: entry.strike,
+      lastEval: entry.lastEval,
+      checkpoints: entry.checkpoints ?? [],
+      paper,
+    };
+    this.log.journal(record);
+    this.learner.addRecord(record);
+    const trade = this.applySettleRecord(record);
+    const s = this.stats;
+    const tradeNote = trade
+      ? ` | posisi ${trade.side.toUpperCase()} ${trade.won ? 'MENANG' : 'KALAH'} ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl.toFixed(2)}${trade.probe ? ' (probe)' : ''}`
+      : '';
     this.log.info(
       `[${entry.asset}] selesai: ${outcomeUp ? 'UP' : 'DOWN'} (sumber ${source}), prediksi terakhir pUp=${fmt(entry.lastEval.pUp)}${tradeNote}` +
         ` | akurasi ${s.correct}/${s.scored}, Brier ${fmt(s.brierSum / s.scored)}` +
-        (!this.live ? ` | paper PnL $${s.paperPnl.toFixed(2)} (${s.wins}/${s.trades} menang)` : ''),
+        ` | PnL ${this.live ? '' : 'simulasi '}$${s.paperPnl.toFixed(2)} (${s.wins}/${s.trades} menang)`,
     );
     return true;
+  }
+
+  /** Detail saat order terisi: sisa waktu, peluang model, ask, dan edge setelah fee. */
+  fillInfo(entry, side, price) {
+    const ev = entry.lastEval;
+    const prob = ev ? (side === 'up' ? ev.pUp : 1 - ev.pUp) : null;
+    const fee = entry.feeRate ?? 0;
+    return {
+      secondsLeft: Math.round((entry.window.endMs - Date.now()) / 1000),
+      prob,
+      pUpRaw: ev?.pUpRaw ?? null,
+      ask: entry.book?.[side]?.bestAsk ?? null,
+      edge: prob !== null ? prob - price * (1 + fee) : null,
+      knownCount: ev?.knownCount ?? 0,
+      at: Date.now(),
+    };
+  }
+
+  /** Tambahkan hasil market ke statistik & riwayat dashboard (dipakai juga saat memuat log). */
+  applySettleRecord(r) {
+    const s = this.stats;
+    const pUp = r.lastEval?.pUp;
+    s.settled++;
+    if (Number.isFinite(pUp)) {
+      s.scored++;
+      s.brierSum += brier(pUp, r.outcomeUp);
+      if ((pUp >= 0.5 ? 1 : 0) === r.outcomeUp) s.correct++;
+    }
+    const [t] = tradesFromRecords([r]);
+    let trade = null;
+    if (t) {
+      trade = { side: t.side, price: t.price, quantity: t.quantity, won: t.won, pnl: t.pnl, probe: t.probe, secondsLeft: t.secondsLeft, prob: t.prob, edge: t.edge };
+      s.paperPnl += t.pnl;
+      s.trades++;
+      if (t.won) s.wins++;
+    }
+    this.history.push({
+      ts: Date.parse(r.ts) || Date.now(),
+      endMs: r.endMs ?? (Date.parse(r.ts) || Date.now()),
+      marketId: r.marketId,
+      asset: r.asset,
+      question: r.question ?? '',
+      outcome: r.outcomeUp ? 'up' : 'down',
+      source: r.source,
+      pUp,
+      correct: Number.isFinite(pUp) ? (pUp >= 0.5 ? 1 : 0) === r.outcomeUp : null,
+      trade,
+    });
+    if (this.history.length > 500) this.history.shift();
+    return trade;
   }
 
   // ------------------------------------------------------------------ kontrol & dashboard
@@ -640,6 +729,7 @@ export class Bot {
         feeRate: e.feeRate ?? null,
         arb: e.arb ?? null,
         pUp: e.lastEval?.pUp ?? null,
+        pUpRaw: e.lastEval?.pUpRaw ?? null,
         spot: e.lastEval?.spot ?? null,
         evalAgeSec: e.lastEval ? (now - e.lastEval.at) / 1000 : null,
         decision: e.lastDecision ?? null,
@@ -693,6 +783,7 @@ export class Bot {
       prices,
       history: this.history.slice(-200),
       logs: this.log.recent ? this.log.recent(150) : [],
+      learning: this.learner.report(),
     };
   }
 }
