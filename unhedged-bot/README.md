@@ -76,6 +76,9 @@ node src/index.js discover --raw   # tampilkan JSON mentah market untuk diperiks
 # 2) Jalankan simulasi (DRY_RUN=true): tidak ada order sungguhan
 npm start
 
+# Cek koneksi ke sumber harga resmi (Binance & Bybit) dari server ini
+node src/index.js check
+
 # 3) Cek saldo, order, dan posisi (butuh API key)
 npm run status
 
@@ -239,9 +242,9 @@ tidak menemukan market:
   order resting bisa terisi di antara dua pembacaan tanpa terdeteksi.
 - **Pasar bisa sangat efisien.** Contoh data asli: 97 detik sebelum tutup, UP sudah dihargai
   0.97. Bila pemain lain sudah secepat ini, edge bisa sangat tipis atau tidak ada.
-- **Sumber harga CC.** Bot membaca venue CC dari data market. Bila venue-nya belum didukung,
-  log menampilkan "Harga CC tidak tersedia". Jalankan `node src/index.js discover --raw CC`
-  dan kirim hasilnya agar bisa ditambahkan.
+- **Sumber harga CC = Bybit CCUSDT.** Penutupan per detik CC dibentuk dari trade Bybit
+  terbaru (seperti Unhedged, sumber `bybit-trades`). Bybit memblokir beberapa negara/data center;
+  jalankan `node src/index.js check` di VPS untuk memastikan semua sumber harga bisa diakses.
 - Bot tidak menyentuh market yang sudah punya order manual milik Anda.
 
 ## Struktur kode

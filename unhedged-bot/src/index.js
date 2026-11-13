@@ -5,7 +5,7 @@ import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
-import { discoverMarkets, extractStrike, marketText, marketType, resolverInfo, bookTop, marketTakerFee } from './markets.js';
+import { discoverMarkets, extractStrike, marketText, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 
 const HELP = `Bot Unhedged Up/Down 5 menit
 
@@ -13,6 +13,7 @@ Perintah:
   node src/index.js run        Jalankan bot (default DRY_RUN=true / simulasi)
   node src/index.js discover   Tampilkan market yang cocok & yang ditolak (beserta alasannya)
                                Tambah --raw [ASET] untuk melihat JSON mentah market (mis. --raw CC)
+  node src/index.js check      Cek koneksi ke sumber harga resmi (Binance, Bybit) dari server ini
   node src/index.js status     Tampilkan saldo, equity, order terbuka, dan posisi (butuh API key)
 
 Konfigurasi lewat file .env (salin dari .env.example).`;
@@ -29,6 +30,7 @@ async function main() {
   const api = new UnhedgedApi({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey, logger: log });
 
   if (cmd === 'discover') return discover(api, cfg);
+  if (cmd === 'check') return check(api, cfg, log);
   if (cmd === 'status') return status(api);
   if (cmd !== 'run') {
     console.log(HELP);
@@ -90,6 +92,29 @@ async function discover(api, cfg) {
       '\nTidak ada market yang cocok. Jalankan dengan --raw untuk melihat format market, lalu atur MARKET_REGEX / FEED_CATEGORY di .env.',
     );
   }
+}
+
+/** Cek apakah sumber harga resmi tiap aset bisa diakses dari server ini. */
+async function check(api, cfg, log) {
+  const prices = new PriceFeed({ api, logger: log });
+  const { accepted } = await discoverMarkets(api, cfg);
+  for (const a of accepted) prices.setAssetSource(a.asset, priceSourceOf(a.market, a.asset));
+  console.log('\nCek sumber harga (harus sama dengan sumber resolusi Unhedged):');
+  let ok = true;
+  for (const asset of cfg.assets) {
+    const src = prices.sourceFor(asset);
+    const label = src ? `${src.venue} ${src.symbol}` : 'tidak diketahui';
+    const data = await prices.series(asset).catch(() => null);
+    const now = Math.floor(Date.now() / 1000) * 1000;
+    const closes = await prices.secondCloses(asset, now - 30_000, now).catch(() => ({ count: 0, source: 'error' }));
+    const good = !!data && data.source === src?.venue && closes.count >= 20;
+    if (!good) ok = false;
+    console.log(
+      `- ${asset.padEnd(4)} ${good ? 'OK   ' : 'GAGAL'} sumber=${label} | harga=${data ? data.spot : '-'} (dari ${data?.source ?? '-'})` +
+        ` | penutupan per detik 30s terakhir: ${closes.count}/30 (${closes.source})`,
+    );
+  }
+  console.log(ok ? '\nSemua sumber harga OK.' : '\nAda sumber yang gagal. Kemungkinan diblokir dari lokasi VPS ini; bot akan memakai cadangan yang kurang presisi.');
 }
 
 async function status(api) {

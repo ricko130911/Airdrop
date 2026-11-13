@@ -3,6 +3,7 @@
 // Venue yang didukung: binance, mexc, bybit, okx, gate, kucoin (+ coinbase & data Unhedged sebagai cadangan).
 
 const BINANCE_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
+const BYBIT_HOSTS = ['https://api.bybit.com', 'https://api.bytick.com'];
 const DEFAULT_SOURCES = {
   BTC: { venue: 'binance', symbol: 'BTCUSDT', asset: 'BTC', quote: 'USDT' },
   ETH: { venue: 'binance', symbol: 'ETHUSDT', asset: 'ETH', quote: 'USDT' },
@@ -33,6 +34,8 @@ export class PriceFeed {
     this.binanceHost = null;
     this.ctmRoundCache = new Map();
     this.warned = new Set();
+    this.tradePoints = new Map(); // asset -> [{t,p}] trade terbaru (Bybit)
+    this.tradeIds = new Map();
   }
 
   /** Simpan sumber harga resmi untuk aset (dipelajari dari data market). */
@@ -57,6 +60,8 @@ export class PriceFeed {
 
     const attempts = [];
     const src = this.sourceFor(asset);
+    // Kumpulkan trade Bybit terus-menerus agar penutupan per detik lengkap saat dibutuhkan
+    if (src?.venue === 'bybit') this.collectBybitTrades(asset, src).catch(() => {});
     if (src) attempts.push(() => this.venueSeries(src));
     if (COINBASE_PRODUCT[asset] && src?.venue !== 'coinbase') attempts.push(() => this.coinbaseSeries(asset));
     attempts.push(() => this.unhedgedCtmSeries(asset));
@@ -111,7 +116,7 @@ export class PriceFeed {
         break;
       }
       case 'bybit': {
-        const r = await getJson(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${src.symbol}&interval=1&limit=120`);
+        const r = await this.bybitGet(`/v5/market/kline?category=spot&symbol=${src.symbol}&interval=1&limit=120`);
         rows = (r?.result?.list ?? []).map((k) => ({ t: +k[0], o: +k[1], c: +k[4] })).reverse();
         break;
       }
@@ -222,19 +227,54 @@ export class PriceFeed {
         this.log?.debug(`1s klines gagal untuk ${asset}: ${e.message}`);
       }
     }
-    // Cadangan: sampel harga yang dikumpulkan bot sendiri (kurang presisi)
-    const samples = this.samples.get(asset) ?? [];
-    let i = 0;
-    let last = null;
-    let sum = 0;
-    let count = 0;
-    for (let t = fromMs; t < end; t += 1000) {
-      while (i < samples.length && samples[i].t <= t + 999) last = samples[i++].p;
-      if (last === null) continue;
-      sum += last;
-      count++;
+    // Bybit (sumber CC): bangun penutupan per detik dari trade terbaru, sama seperti Unhedged ("bybit-trades")
+    if (src?.venue === 'bybit') {
+      try {
+        await this.collectBybitTrades(asset, src);
+      } catch (e) {
+        this.log?.debug(`trade bybit gagal untuk ${asset}: ${e.message}`);
+      }
+      const points = mergePoints(this.tradePoints.get(asset) ?? [], this.samples.get(asset) ?? []);
+      return { ...closesFromPoints(points, fromMs, end), source: 'bybit-trades' };
     }
-    return { sum, count, source: 'samples' };
+    // Cadangan: sampel harga yang dikumpulkan bot sendiri (kurang presisi)
+    return { ...closesFromPoints(this.samples.get(asset) ?? [], fromMs, end), source: 'samples' };
+  }
+
+  /** Ambil trade terbaru Bybit spot dan simpan (maks 15 menit) untuk membentuk penutupan per detik. */
+  async collectBybitTrades(asset, src) {
+    const r = await this.bybitGet(`/v5/market/recent-trade?category=spot&symbol=${src.symbol}&limit=60`);
+    const list = r?.result?.list ?? [];
+    const arr = this.tradePoints.get(asset) ?? [];
+    const seen = this.tradeIds.get(asset) ?? new Set();
+    for (const x of list) {
+      const id = x.execId ?? `${x.time}:${x.price}:${x.size}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const t = Number(x.time);
+      const p = Number(x.price);
+      if (Number.isFinite(t) && p > 0) arr.push({ t, p });
+    }
+    arr.sort((a, b) => a.t - b.t);
+    const cutoff = Date.now() - 15 * 60_000;
+    while (arr.length && arr[0].t < cutoff) arr.shift();
+    if (seen.size > 5000) this.tradeIds.set(asset, new Set([...seen].slice(-2000)));
+    else this.tradeIds.set(asset, seen);
+    this.tradePoints.set(asset, arr);
+  }
+
+  async bybitGet(pathAndQuery) {
+    let lastErr;
+    for (const h of BYBIT_HOSTS) {
+      try {
+        const data = await getJson(h + pathAndQuery);
+        if (data?.retCode && data.retCode !== 0) throw new Error(`bybit retCode ${data.retCode}: ${data.retMsg}`);
+        return data;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr;
   }
 
   /** TWAP penutupan per detik pada [fromMs, toMs); null bila data kurang dari 90%. */
@@ -244,3 +284,29 @@ export class PriceFeed {
     return count >= expected * 0.9 && count > 0 ? sum / count : null;
   }
 }
+
+/** Gabungkan dua deret titik harga {t,p} dan urutkan menurut waktu. */
+export function mergePoints(a, b) {
+  return [...a, ...b].sort((x, y) => x.t - y.t);
+}
+
+/**
+ * Penutupan per detik dari titik harga (trade/sampel), dengan aturan Unhedged:
+ * penutupan detik = harga terakhir sampai akhir detik itu; detik tanpa trade memakai harga terakhir.
+ * @param {{t:number,p:number}[]} points urut naik
+ * @returns {{sum:number, count:number}}
+ */
+export function closesFromPoints(points, fromMs, endMs) {
+  let i = 0;
+  let last = null;
+  let sum = 0;
+  let count = 0;
+  for (let t = fromMs; t < endMs; t += 1000) {
+    while (i < points.length && points[i].t < t + 1000) last = points[i++].p;
+    if (last === null) continue;
+    sum += last;
+    count++;
+  }
+  return { sum, count };
+}
+
