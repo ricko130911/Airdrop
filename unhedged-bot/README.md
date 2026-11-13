@@ -150,10 +150,17 @@ Saat bot berjalan, dashboard otomatis aktif di **port 3005**. Isinya:
 - **Riwayat market** dan **jurnal aktivitas** real-time
 - **Tombol kontrol:** Jeda/Lanjutkan trading, Batalkan semua order, Lepas rem darurat
 
-Dashboard dilindungi login. **Wajib isi `DASHBOARD_PASSWORD`** (minimal 8 karakter) di `.env`.
-Tanpa password, dashboard tidak akan dijalankan bila dibuka ke publik. Login dengan
-username `DASHBOARD_USER` (default `admin`) dan password tersebut. Setelah 10 kali gagal login,
-IP tersebut diblokir selama 15 menit.
+Ada dua halaman:
+
+| Alamat | Login | Isi |
+|---|---|---|
+| `http://IP_VPS:3005` | **tanpa login** | Tampilan lengkap, **hanya melihat**. Cocok untuk Smart TV. Tombol kontrol disembunyikan dan nama akun tidak ditampilkan. |
+| `http://IP_VPS:3005/admin` | `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | Sama, plus tombol Jeda/Lanjutkan, Batalkan Semua Order, dan Lepas Rem Darurat. |
+
+- Halaman `/admin` hanya aktif bila `DASHBOARD_PASSWORD` diisi (minimal 8 karakter). Setelah 10 kali
+  gagal login, IP tersebut diblokir selama 15 menit.
+- Ingin semua halaman wajib login? Set `DASHBOARD_PUBLIC_VIEW=false`.
+- Tampilan tanpa login tetap menampilkan saldo dan hasil trading kepada siapa pun yang tahu IP dan port-nya.
 
 ## Deploy di VPS dengan PM2 (dikendalikan dari Termux)
 
@@ -266,7 +273,8 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `MARKET_REGEX` | kosong | Regex manual untuk memilih market bila deteksi otomatis gagal |
 | `DASHBOARD_PORT` | `3005` | Port dashboard web |
 | `DASHBOARD_HOST` | `0.0.0.0` | `0.0.0.0` = bisa diakses lewat IP VPS, `127.0.0.1` = hanya lokal/SSH tunnel |
-| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | `admin` / kosong | Login dashboard (password wajib) |
+| `DASHBOARD_PUBLIC_VIEW` | `true` | Halaman utama bisa dilihat tanpa login (Smart TV), hanya melihat |
+| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | `admin` / kosong | Login halaman kontrol `/admin`. Kosong = `/admin` mati |
 
 ## Bila tidak ada market yang terdeteksi
 

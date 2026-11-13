@@ -484,3 +484,7 @@ h2::before {
   .wm { min-width: 0; }
   .only-mobile { display: flex; margin-top: 4px; font-size: 11px; }
 }
+
+/* Tampilan publik (tanpa login): tombol kontrol disembunyikan */
+body.view-only .controls,
+body.view-only [data-action] { display: none !important; }

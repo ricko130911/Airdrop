@@ -4,6 +4,8 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 
 const COIN_GLYPH = { BTC: '₿', ETH: 'Ξ', SOL: '◎', CC: 'C' };
 let state = null;
+// /admin = halaman dengan tombol kontrol (login); selain itu tampilan publik (hanya melihat)
+const BASE = location.pathname === '/admin' || location.pathname.startsWith('/admin/') ? '/admin' : '';
 let serverOffset = 0; // waktu server - waktu lokal
 
 // ---------------------------------------------------------------- format
@@ -35,7 +37,7 @@ function deltaHtml(x, text) {
 
 // ---------------------------------------------------------------- koneksi
 function connect() {
-  const es = new EventSource('/api/stream');
+  const es = new EventSource(BASE + '/api/stream');
   es.onmessage = (ev) => {
     try {
       render(JSON.parse(ev.data));
@@ -54,7 +56,7 @@ async function control(action) {
   }[action];
   if (confirmText && !confirm(confirmText)) return;
   try {
-    const res = await fetch('/api/control', {
+    const res = await fetch(BASE + '/api/control', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-requested-with': 'dashboard' },
       body: JSON.stringify({ action }),
@@ -103,6 +105,11 @@ function render(s) {
 
   $('#haltBanner').hidden = !s.halted;
   $('#haltText').textContent = s.halted ? `Rem darurat aktif: ${s.halted}` : '';
+
+  // Tampilan publik (mis. Smart TV): sembunyikan semua tombol kontrol
+  const canControl = !!s.canControl;
+  document.body.classList.toggle('view-only', !canControl);
+  $('#viewPill').hidden = canControl;
 
   const btn = $('#btnPause');
   btn.dataset.action = s.paused ? 'resume' : 'pause';

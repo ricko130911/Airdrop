@@ -22,10 +22,6 @@ const SECURITY_HEADERS = {
     "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
 };
 
-function isLoopback(host) {
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
-}
-
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
   const hb = crypto.createHash('sha256').update(String(b)).digest();
@@ -37,18 +33,16 @@ function safeEqual(a, b) {
  */
 export function startDashboard({ bot, cfg, log }) {
   const { dashboardHost: host, dashboardPort: port, dashboardUser: user, dashboardPassword: password } = cfg;
-  if (!isLoopback(host) && (!password || password.length < 8)) {
-    log.error(
-      `Dashboard TIDAK dijalankan: DASHBOARD_PASSWORD wajib diisi (min. 8 karakter) karena dashboard dibuka di ${host}:${port}.`,
-    );
-    return null;
-  }
+  // Mode admin (tombol kontrol) hanya aktif bila password cukup kuat
+  const adminEnabled = !!password && password.length >= 8;
+  if (password && !adminEnabled) log.warn('DASHBOARD_PASSWORD kurang dari 8 karakter: halaman /admin (tombol kontrol) dimatikan.');
+  // Tampilan publik tanpa login (hanya melihat). Tanpa password, tampilan publik selalu aktif.
+  const publicView = cfg.dashboardPublicView !== false || !adminEnabled;
 
   const failures = new Map(); // ip -> {count, until}
-  const clients = new Set();
+  const clients = new Map(); // res -> admin?
 
   function checkAuth(req, res) {
-    if (!password) return true;
     const ip = req.socket.remoteAddress ?? '?';
     const f = failures.get(ip);
     if (f && f.count >= 10 && Date.now() < f.until) {
@@ -80,6 +74,15 @@ export function startDashboard({ bot, cfg, log }) {
     return false;
   }
 
+  /** Data untuk tampilan publik tidak memuat nama akun & tidak bisa mengontrol bot. */
+  function viewFor(admin) {
+    const s = bot.snapshot();
+    s.canControl = admin;
+    s.adminAvailable = adminEnabled;
+    if (!admin) s.account = { ...s.account, username: null };
+    return s;
+  }
+
   function sendJson(res, status, data) {
     res.writeHead(status, { ...SECURITY_HEADERS, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(data));
@@ -104,22 +107,36 @@ export function startDashboard({ bot, cfg, log }) {
         res.end('ok');
         return;
       }
-      if (!checkAuth(req, res)) return;
 
-      if (req.method === 'GET' && STATIC[url.pathname]) {
-        const [file, type] = STATIC[url.pathname];
+      // /admin/... = halaman dengan tombol kontrol (wajib login); selain itu = tampilan publik
+      let p = url.pathname;
+      const admin = p === '/admin' || p.startsWith('/admin/');
+      if (admin) {
+        p = p.slice('/admin'.length) || '/';
+        if (!adminEnabled) {
+          res.writeHead(403, { ...SECURITY_HEADERS, 'content-type': 'text/plain; charset=utf-8' });
+          res.end('Halaman admin nonaktif. Isi DASHBOARD_PASSWORD (min. 8 karakter) di .env lalu restart bot.');
+          return;
+        }
+        if (!checkAuth(req, res)) return;
+      } else if (!publicView && !checkAuth(req, res)) {
+        return;
+      }
+
+      if (req.method === 'GET' && STATIC[p]) {
+        const [file, type] = STATIC[p];
         const body = fs.readFileSync(path.join(PUBLIC_DIR, file));
         res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type, 'cache-control': 'no-cache' });
         res.end(body);
         return;
       }
 
-      if (req.method === 'GET' && url.pathname === '/api/state') {
-        sendJson(res, 200, bot.snapshot());
+      if (req.method === 'GET' && p === '/api/state') {
+        sendJson(res, 200, viewFor(admin));
         return;
       }
 
-      if (req.method === 'GET' && url.pathname === '/api/stream') {
+      if (req.method === 'GET' && p === '/api/stream') {
         res.writeHead(200, {
           ...SECURITY_HEADERS,
           'content-type': 'text/event-stream; charset=utf-8',
@@ -128,13 +145,17 @@ export function startDashboard({ bot, cfg, log }) {
           'x-accel-buffering': 'no',
         });
         res.write('retry: 3000\n\n');
-        clients.add(res);
-        res.write(`data: ${JSON.stringify(bot.snapshot())}\n\n`);
+        clients.set(res, admin);
+        res.write(`data: ${JSON.stringify(viewFor(admin))}\n\n`);
         req.on('close', () => clients.delete(res));
         return;
       }
 
-      if (req.method === 'POST' && url.pathname === '/api/control') {
+      if (req.method === 'POST' && p === '/api/control') {
+        if (!admin) {
+          sendJson(res, 403, { error: 'Kontrol hanya bisa dari halaman /admin' });
+          return;
+        }
         // Header khusus mencegah CSRF dari situs lain (browser tidak bisa mengirimnya lintas origin tanpa izin CORS)
         if (req.headers['x-requested-with'] !== 'dashboard') {
           sendJson(res, 403, { error: 'forbidden' });
@@ -149,7 +170,7 @@ export function startDashboard({ bot, cfg, log }) {
           sendJson(res, 400, { error: 'aksi tidak dikenal' });
           return;
         }
-        sendJson(res, 200, { ok: true, state: bot.snapshot() });
+        sendJson(res, 200, { ok: true, state: viewFor(true) });
         return;
       }
 
@@ -163,15 +184,21 @@ export function startDashboard({ bot, cfg, log }) {
 
   const timer = setInterval(() => {
     if (!clients.size) return;
-    const payload = `data: ${JSON.stringify(bot.snapshot())}\n\n`;
-    for (const c of clients) c.write(payload);
+    const cache = {};
+    for (const [c, admin] of clients) {
+      cache[admin] ??= `data: ${JSON.stringify(viewFor(admin))}\n\n`;
+      c.write(cache[admin]);
+    }
   }, 2000);
   timer.unref();
 
   server.on('error', (e) => log.error(`Dashboard gagal listen di ${host}:${port}: ${e.message}`));
   server.listen(port, host, () => {
     const shown = host === '0.0.0.0' ? 'IP_VPS_ANDA' : host;
-    log.info(`Dashboard aktif: http://${shown}:${port}  (login: ${password ? user : 'tanpa password, hanya lokal'})`);
+    log.info(
+      `Dashboard aktif: http://${shown}:${port}${publicView ? ' (tanpa login, hanya melihat)' : ' (wajib login)'}` +
+        (adminEnabled ? ` | kontrol: http://${shown}:${port}/admin (login: ${user})` : ' | tombol kontrol nonaktif (DASHBOARD_PASSWORD kosong)'),
+    );
   });
   return server;
 }

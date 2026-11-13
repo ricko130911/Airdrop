@@ -81,6 +81,8 @@ export function loadConfig() {
     dashboardPort: num('DASHBOARD_PORT', 3005),
     dashboardUser: str('DASHBOARD_USER', 'admin'),
     dashboardPassword: str('DASHBOARD_PASSWORD'),
+    // true = halaman utama bisa dilihat tanpa login (mis. Smart TV); tombol kontrol tetap di /admin
+    dashboardPublicView: bool('DASHBOARD_PUBLIC_VIEW', true),
   };
   validate(cfg);
   return cfg;
