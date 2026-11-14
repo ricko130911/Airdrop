@@ -120,6 +120,9 @@ function analyze(cfg) {
     console.log('\nBelum ada data versi baru. Biarkan bot berjalan dulu.');
     return;
   }
+  console.log('\n== Menurut strategi ==');
+  console.log(head);
+  for (const g of r.byStrategy) console.log(row(g, g.key === 'sniper' ? 'sniper' : 'model'));
   console.log('\n== Menurut sisa waktu saat order terisi ==');
   console.log(head);
   for (const g of r.byTime) console.log(row(g));

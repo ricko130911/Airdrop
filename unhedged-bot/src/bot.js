@@ -1,6 +1,6 @@
 import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, brier } from './model.js';
-import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb } from './strategy.js';
+import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor } from './strategy.js';
 import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
 import path from 'node:path';
 
@@ -87,7 +87,7 @@ export class Bot {
       } catch (e) {
         this.log.error(`Error di loop: ${e.message}`);
       }
-      const wait = this.cfg.pollMs - (Date.now() - t0);
+      const wait = (this.fastMode ? this.cfg.snipePollMs : this.cfg.pollMs) - (Date.now() - t0);
       if (wait > 0) await sleep(wait);
     }
   }
@@ -112,7 +112,15 @@ export class Bot {
       await Promise.all(this.cfg.assets.map((a) => this.prices.series(a).catch(() => null)));
     }
 
+    const { startAt, stopAt } = this.tradeWindow();
     const entries = [...this.markets.values()].sort((a, b) => a.window.endMs - b.window.endMs);
+    // Mode cepat (poll ~1 detik) selama ada market di jendela tembak sniper
+    this.fastMode =
+      this.cfg.strategy === 'sniper' &&
+      entries.some((e) => {
+        const left = (e.window.endMs - Date.now()) / 1000;
+        return left <= startAt + 3 && left > stopAt - 1;
+      });
     for (const entry of entries) {
       const secondsLeft = (entry.window.endMs - Date.now()) / 1000;
 
@@ -121,11 +129,11 @@ export class Bot {
         if (done) this.markets.delete(entry.market.id);
         continue;
       }
-      if (secondsLeft <= this.cfg.stopSecondsLeft) {
+      if (secondsLeft <= stopAt) {
         if (entry.order) await this.cancelOrder(entry, 'mendekati penutupan');
         continue;
       }
-      if (secondsLeft > this.cfg.tradeWhenSecondsLeft) continue;
+      if (secondsLeft > startAt) continue;
       if (Date.now() < entry.window.startMs) continue;
       if (this.foreignMarkets.has(entry.market.id)) continue;
 
@@ -306,7 +314,10 @@ export class Bot {
       pUp = probabilityUp({ ...common, strike: entry.strike.value });
     }
     const knownAvg = known?.count ? known.sum / known.count : null;
-    return { pUp, spot: data.spot, sigma, drift, source: data.source, knownAvg, knownCount: known?.count ?? 0 };
+    // Data per detik harus lengkap: detik yang sudah lewat di jendela rata-rata harus sudah ada datanya
+    const elapsed = avgSec > 0 ? Math.max(0, Math.floor(avgSec - secondsLeft)) : 0;
+    const dataOk = avgSec === 0 || elapsed === 0 || (known?.count ?? 0) >= elapsed - 3;
+    return { pUp, spot: data.spot, sigma, drift, source: data.source, knownAvg, knownCount: known?.count ?? 0, knownSource: known?.source, dataOk, elapsed };
   }
 
   /** Simulasi fill (DRY-RUN): order terisi hanya bila ada ask di order book <= harga order. */
@@ -316,8 +327,8 @@ export class Bot {
     const ask = entry.book?.[o.side]?.bestAsk ?? null;
     if (ask === null || ask > o.price) return;
     const fill = Math.min(ask, o.price);
-    const fee = (entry.feeRate ?? 0) * fill * o.quantity;
-    entry.paper = { side: o.side, price: fill, quantity: o.quantity, fee, probe: !!o.probe, fill: this.fillInfo(entry, o.side, fill) };
+    const fee = feeFor(fill, entry.feeRate ?? 0, this.cfg.feeModel) * o.quantity;
+    entry.paper = { side: o.side, price: fill, quantity: o.quantity, fee, probe: !!o.probe, strategy: o.strategy ?? 'model', fill: this.fillInfo(entry, o.side, fill) };
     entry.hasPosition = true;
     entry.order = null;
     const f = entry.paper.fill;
@@ -398,6 +409,11 @@ export class Bot {
       return;
     }
 
+    if (this.cfg.strategy === 'sniper') {
+      await this.handleSnipe(entry, secondsLeft, est, pUpRaw, tag, info, exposureLeftUsd);
+      return;
+    }
+
     const zone = this.learner.zoneVerdict(entry.asset, secondsLeft);
     let d = decideOrderBook({
       pUp: est.pUp,
@@ -452,7 +468,7 @@ export class Bot {
 
     if (!this.live) {
       this.log.info(`[DRY] ${msg}`);
-      entry.order = { id: `dry-${Date.now()}`, side: d.side, outcome, price: d.price, quantity: d.quantity, dry: true, probe: !!d.probe };
+      entry.order = { id: `dry-${Date.now()}`, side: d.side, outcome, price: d.price, quantity: d.quantity, dry: true, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       return;
     }
 
@@ -467,9 +483,9 @@ export class Bot {
         quantity: d.quantity,
       });
       const o = res?.order ?? {};
-      entry.order = { id: String(o.id), side: d.side, outcome, price: d.price, quantity: d.quantity, probe: !!d.probe };
+      entry.order = { id: String(o.id), side: d.side, outcome, price: d.price, quantity: d.quantity, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       const px = d.fillsNow ? d.ask : d.price;
-      entry.paper = { side: d.side, price: px, quantity: d.quantity, fee: (entry.feeRate ?? 0) * px * d.quantity, probe: !!d.probe };
+      entry.paper = { side: d.side, price: px, quantity: d.quantity, fee: feeFor(px, entry.feeRate ?? 0, this.cfg.feeModel) * d.quantity, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       if (d.fillsNow) entry.paper.fill = this.fillInfo(entry, d.side, px);
       this.log.info(`${tag} order #${o.id} status=${o.status}`);
     } catch (e) {
@@ -636,6 +652,67 @@ export class Bot {
     return true;
   }
 
+  /** Jendela trading efektif (detik tersisa) sesuai strategi. */
+  tradeWindow() {
+    return this.cfg.strategy === 'sniper'
+      ? { startAt: this.cfg.snipeMaxSec, stopAt: this.cfg.snipeMinSec }
+      : { startAt: this.cfg.tradeWhenSecondsLeft, stopAt: this.cfg.stopSecondsLeft };
+  }
+
+  /** Statistik hari ini (UTC): PnL, jumlah trade, dan kekalahan sniper. */
+  todayStats() {
+    const day = new Date().toISOString().slice(0, 10);
+    let pnl = 0;
+    let trades = 0;
+    let wins = 0;
+    let snipeLosses = 0;
+    for (const h of this.history) {
+      if (!h.trade || new Date(h.ts).toISOString().slice(0, 10) !== day) continue;
+      trades++;
+      pnl += h.trade.pnl;
+      if (h.trade.won) wins++;
+      else if (h.trade.strategy === 'sniper') snipeLosses++;
+    }
+    return { day, pnl, trades, wins, snipeLosses };
+  }
+
+  /**
+   * Strategi SNIPER: tembak di detik-detik terakhir hanya bila hasil hampir pasti,
+   * data per detik lengkap, ada penjual, dan masih untung setelah fee.
+   */
+  async handleSnipe(entry, secondsLeft, est, pUpRaw, tag, info, exposureLeftUsd) {
+    // Order sniper yang tidak langsung terisi tidak dikejar: batalkan
+    if (entry.order) {
+      await this.cancelOrder(entry, 'tembakan tidak terisi, tidak dikejar');
+      return;
+    }
+    const today = this.todayStats();
+    if (this.cfg.snipeMaxLossesPerDay > 0 && today.snipeLosses >= this.cfg.snipeMaxLossesPerDay) {
+      entry.lastDecision = `rem sniper: ${today.snipeLosses} kalah hari ini, lanjut besok`;
+      return;
+    }
+    if (this.cfg.dailyProfitTargetUsd > 0 && today.pnl >= this.cfg.dailyProfitTargetUsd) {
+      entry.lastDecision = `target harian tercapai (+$${today.pnl.toFixed(2)})`;
+      return;
+    }
+    if (!est.dataOk) {
+      entry.lastDecision = `data per detik belum lengkap (${est.knownCount}/${est.elapsed} dtk)`;
+      return;
+    }
+    // Pakai peluang yang paling konservatif antara model mentah & terkalibrasi
+    const side = est.pUp >= 0.5 ? 'up' : 'down';
+    const sideProb = (p) => (side === 'up' ? p : 1 - p);
+    const prob = Math.min(sideProb(est.pUp), sideProb(pUpRaw));
+    const d = decideSnipe({ prob, side, book: entry.book, feeRate: entry.feeRate ?? 0, cfg: this.cfg, exposureLeftUsd });
+    entry.lastDecision = d.action === 'buy' ? `TEMBAK ${side.toUpperCase()} @ ${d.price.toFixed(2)} · untung ~${(d.ev * 100).toFixed(1)}¢/kontrak` : `sniper: ${d.reason}`;
+    if (d.action !== 'buy') {
+      this.log.debug(`${tag} ${info} -> sniper skip: ${d.reason}`);
+      return;
+    }
+    await this.placeOrder(entry, d, `${tag} [SNIPER]`, info);
+    this.simulateFill(entry, tag);
+  }
+
   /** Detail saat order terisi: sisa waktu, peluang model, ask, dan edge setelah fee. */
   fillInfo(entry, side, price) {
     const ev = entry.lastEval;
@@ -646,7 +723,7 @@ export class Bot {
       prob,
       pUpRaw: ev?.pUpRaw ?? null,
       ask: entry.book?.[side]?.bestAsk ?? null,
-      edge: prob !== null ? prob - price * (1 + fee) : null,
+      edge: prob !== null ? prob - price - feeFor(price, fee, this.cfg.feeModel) : null,
       knownCount: ev?.knownCount ?? 0,
       at: Date.now(),
     };
@@ -665,7 +742,7 @@ export class Bot {
     const [t] = tradesFromRecords([r]);
     let trade = null;
     if (t) {
-      trade = { side: t.side, price: t.price, quantity: t.quantity, won: t.won, pnl: t.pnl, probe: t.probe, secondsLeft: t.secondsLeft, prob: t.prob, edge: t.edge };
+      trade = { side: t.side, price: t.price, quantity: t.quantity, won: t.won, pnl: t.pnl, probe: t.probe, strategy: t.strategy, secondsLeft: t.secondsLeft, prob: t.prob, edge: t.edge };
       s.paperPnl += t.pnl;
       s.trades++;
       if (t.won) s.wins++;
@@ -750,8 +827,6 @@ export class Bot {
       };
     }
 
-    const tradesDone = this.history.filter((h) => h.trade);
-    const realized = tradesDone.reduce((acc, h) => acc + h.trade.pnl, 0);
     return {
       now,
       mode: this.live ? 'LIVE' : 'DRY-RUN',
@@ -761,23 +836,26 @@ export class Bot {
       account: { ...this.account, dayPnl: this.live ? this.dayPnl : null, bankroll: this.bankroll },
       exposureUsd: this.exposureUsd(),
       config: {
+        strategy: c.strategy,
+        snipe: c.strategy === 'sniper' ? { minProb: c.snipeMinProb, maxPrice: c.snipeMaxPrice, minEv: c.snipeMinEv, usd: c.snipeUsd, maxLossesPerDay: c.snipeMaxLossesPerDay, dailyTarget: c.dailyProfitTargetUsd, feeModel: c.feeModel } : null,
         assets: c.assets,
         maxOrderUsd: c.maxOrderUsd,
         maxOpenExposureUsd: c.maxOpenExposureUsd,
         maxDailyLossUsd: c.maxDailyLossUsd,
         minEdge: c.minEdge,
         kellyFraction: c.kellyFraction,
-        tradeWhenSecondsLeft: c.tradeWhenSecondsLeft,
-        stopSecondsLeft: c.stopSecondsLeft,
+        tradeWhenSecondsLeft: this.tradeWindow().startAt,
+        stopSecondsLeft: this.tradeWindow().stopAt,
         sigmaMultiplier: c.sigmaMultiplier,
       },
       stats: {
         settled: s.settled,
         accuracy: s.scored ? s.correct / s.scored : null,
         brier: s.scored ? s.brierSum / s.scored : null,
-        trades: tradesDone.length,
-        wins: tradesDone.filter((h) => h.trade.won).length,
-        pnl: realized,
+        trades: s.trades,
+        wins: s.wins,
+        pnl: s.paperPnl,
+        today: this.todayStats(),
       },
       markets,
       prices,

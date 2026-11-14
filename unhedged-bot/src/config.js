@@ -60,6 +60,19 @@ export function loadConfig() {
     hysteresis: num('HYSTERESIS', 0.05),
     // Fee per kontrak (fraksi harga). Kosong = pakai tarif taker tier 0 dari data market (5%)
     feeRate: num('FEE_RATE', null),
+    feeModel: str('FEE_MODEL', 'flat'),
+
+    // Strategi: 'sniper' (tembak di akhir round, default) atau 'model' (strategi lama)
+    strategy: str('STRATEGY', 'sniper').toLowerCase(),
+    snipeMaxSec: num('SNIPE_MAX_SEC', 45),
+    snipeMinSec: num('SNIPE_MIN_SEC', 4),
+    snipeMinProb: num('SNIPE_MIN_PROB', 0.97),
+    snipeMaxPrice: num('SNIPE_MAX_PRICE', 0.95),
+    snipeMinEv: num('SNIPE_MIN_EV', 0.015),
+    snipeUsd: num('SNIPE_USD', 3),
+    snipePollMs: num('SNIPE_POLL_MS', 1000),
+    snipeMaxLossesPerDay: num('SNIPE_MAX_LOSSES_PER_DAY', 2),
+    dailyProfitTargetUsd: num('DAILY_PROFIT_TARGET_USD', 0),
 
     // Pembelajaran dari hasil sendiri
     adaptive: bool('ADAPTIVE', true),
@@ -99,5 +112,11 @@ function validate(cfg) {
     errs.push('STOP_SECONDS_LEFT harus lebih kecil dari TRADE_WHEN_SECONDS_LEFT');
   if (cfg.sigmaMultiplier < 1) errs.push('SIGMA_MULTIPLIER sebaiknya >= 1');
   if (cfg.maxOrderUsd <= 0) errs.push('MAX_ORDER_USD harus > 0');
+  if (!['sniper', 'model'].includes(cfg.strategy)) errs.push("STRATEGY harus 'sniper' atau 'model'");
+  if (!['flat', 'risk'].includes(cfg.feeModel)) errs.push("FEE_MODEL harus 'flat' atau 'risk'");
+  if (!(cfg.snipeMinSec >= 1 && cfg.snipeMinSec < cfg.snipeMaxSec)) errs.push('SNIPE_MIN_SEC harus >= 1 dan < SNIPE_MAX_SEC');
+  if (!(cfg.snipeMinProb > 0.5 && cfg.snipeMinProb < 1)) errs.push('SNIPE_MIN_PROB harus di antara 0.5 dan 1');
+  if (!(cfg.snipeMaxPrice > 0 && cfg.snipeMaxPrice < 1)) errs.push('SNIPE_MAX_PRICE harus di antara 0 dan 1');
+  if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
   if (errs.length) throw new Error('Konfigurasi tidak valid:\n - ' + errs.join('\n - '));
 }

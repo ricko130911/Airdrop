@@ -8,6 +8,34 @@ Bot trading otomatis untuk market prediksi **"naik atau turun dalam 5 menit"** d
 > berjalan dalam **mode simulasi (DRY_RUN) secara default**. Uji dulu berhari-hari,
 > pakai nominal kecil, dan jangan pernah memakai uang yang tidak siap hilang.
 
+## Strategi default: SNIPER akhir round
+
+Simulasi 610 trade dengan strategi lama (menebak arah 1–3 menit sebelum tutup) **rugi 13.7%**:
+order yang terisi justru yang salah, karena trader lain lebih cepat (*adverse selection*), ditambah fee 5%.
+Karena itu strategi default sekarang adalah **sniper**:
+
+1. **Hanya menembak di detik-detik terakhir** (default sisa 45 sampai 4 detik). Pada saat itu sebagian
+   besar rata-rata 60 detik sudah pasti dari data per detik Binance/Bybit.
+2. **Hanya bila hampir pasti:** peluang menang ≥ `SNIPE_MIN_PROB` (97%). Bot memakai peluang yang
+   paling konservatif antara model mentah dan model terkalibrasi.
+3. **Data harus lengkap:** setiap detik yang sudah lewat di jendela rata-rata harus sudah ada datanya.
+   Kalau data tertinggal, bot tidak menembak.
+4. **Hanya membeli dari penjual yang sudah ada (taker):** tidak memasang order yang menunggu, dan
+   order yang tidak langsung terisi dibatalkan, tidak dikejar.
+5. **Hanya bila masih untung setelah fee:** `peluang − harga − fee ≥ SNIPE_MIN_EV` (1.5 sen/kontrak),
+   dengan harga beli maksimum `SNIPE_MAX_PRICE` (0.95).
+6. **Modal kecil dan tetap per tembakan** (`SNIPE_USD`, default $3), dengan pemeriksaan setiap 1 detik
+   selama jendela tembak.
+7. **Rem harian:** setelah kalah `SNIPE_MAX_LOSSES_PER_DAY` kali (default 2), sniper berhenti sampai
+   besok (UTC). Opsional: berhenti setelah untung harian mencapai `DAILY_PROFIT_TARGET_USD`.
+
+> **Risiko yang harus dipahami:** sniper membeli di harga tinggi (misalnya 0.90). Satu kemenangan
+> hanya untung sekitar $0.15–0.30, sedangkan satu kekalahan bisa rugi sekitar $2.80. Sniper hanya
+> menguntungkan bila akurasinya sangat tinggi (di atas sekitar 95%). Uji di simulasi dulu, lalu lihat
+> baris **sniper** di `node src/index.js analyze`.
+
+Strategi lama tetap tersedia dengan `STRATEGY=model`.
+
 ## Cara kerja ("pintar"-nya di mana?)
 
 ### Aturan resolusi Unhedged (dari data market asli)
@@ -266,6 +294,15 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `MOMENTUM_WEIGHT` | `0.2` | Bobot momentum (0 = abaikan) |
 | `HYSTERESIS` | `0.05` | Keyakinan tambahan untuk berpindah sisi (anti bolak-balik) |
 | `FEE_RATE` | kosong | Fee per kontrak (fraksi harga). Kosong = tarif taker dari data market |
+| `STRATEGY` | `sniper` | `sniper` = tembak di akhir round, `model` = strategi lama |
+| `SNIPE_MAX_SEC` / `SNIPE_MIN_SEC` | `45` / `4` | Jendela tembak (detik tersisa) |
+| `SNIPE_MIN_PROB` | `0.97` | Peluang menang minimal |
+| `SNIPE_MAX_PRICE` | `0.95` | Harga beli maksimum |
+| `SNIPE_MIN_EV` | `0.015` | Untung minimal per kontrak setelah fee |
+| `SNIPE_USD` | `3` | Modal per tembakan |
+| `SNIPE_MAX_LOSSES_PER_DAY` | `2` | Rem: berhenti sampai besok setelah kalah sebanyak ini |
+| `DAILY_PROFIT_TARGET_USD` | `0` | Berhenti setelah untung harian mencapai angka ini (0 = tanpa target) |
+| `FEE_MODEL` | `flat` | `flat` = tarif × harga (konservatif), `risk` = tarif × min(harga, 1−harga) |
 | `ADAPTIVE` | `true` | Kalibrasi peluang otomatis + blokir zona yang terbukti rugi |
 | `ADAPTIVE_MIN_TRADES` | `25` | Minimal trade per zona sebelum zona boleh diblokir |
 | `CALIBRATION_MIN_SAMPLES` | `40` | Minimal market per titik waktu sebelum kalibrasi aktif |

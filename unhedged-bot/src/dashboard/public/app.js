@@ -243,7 +243,7 @@ function renderMarkets(s) {
                   <span><span class="muted">${esc(m.downLabel)}</span> <b>${pct(1 - m.pUp)}</b> <span class="arrow-down" aria-hidden="true">▼</span></span>
                 </div>
               </div>`
-            : `<div class="empty" style="padding:4px 0">Model aktif saat sisa ≤ ${s.config.tradeWhenSecondsLeft} detik.</div>`
+            : `<div class="empty" style="padding:4px 0">${s.config.snipe ? 'Sniper aktif' : 'Model aktif'} saat sisa ≤ ${s.config.tradeWhenSecondsLeft} detik.</div>`
         }
         <div class="kv">
           <div><div class="k">${m.twapKnown ? `Rata² ${m.twapKnown.count}s` : 'Spot'}</div><div class="v">${price(m.twapKnown ? m.twapKnown.avg : m.spot)}</div></div>
@@ -426,17 +426,34 @@ function renderPnl(s) {
 
 function renderParams(s) {
   const c = s.config;
-  const rows = [
-    ['Aset', c.assets.join(' · ')],
-    ['Maks. per order', money(c.maxOrderUsd)],
-    ['Batas exposure', money(c.maxOpenExposureUsd)],
-    ['Rem rugi harian', money(c.maxDailyLossUsd)],
-    ['Edge minimal', (c.minEdge * 100).toFixed(0) + '¢'],
-    ['Fraksi Kelly', c.kellyFraction],
-    ['Mulai trading', `sisa ≤ ${c.tradeWhenSecondsLeft}s`],
-    ['Tutup order', `sisa ≤ ${c.stopSecondsLeft}s`],
-    ['Pengali volatilitas', `×${c.sigmaMultiplier}`],
-  ];
+  const t = s.stats.today;
+  const sn = c.snipe;
+  const rows = sn
+    ? [
+        ['Strategi', 'Sniper akhir round'],
+        ['Jendela tembak', `sisa ${c.tradeWhenSecondsLeft}s → ${c.stopSecondsLeft}s`],
+        ['Peluang minimal', pct(sn.minProb, 0)],
+        ['Harga beli maks.', sn.maxPrice.toFixed(2)],
+        ['Untung minimal', (sn.minEv * 100).toFixed(1) + '¢ / kontrak'],
+        ['Modal per tembakan', money(sn.usd)],
+        ['Model fee', sn.feeModel === 'risk' ? 'risk-shaped' : 'flat (konservatif)'],
+        ['Rem harian', `${t ? t.snipeLosses : 0} / ${sn.maxLossesPerDay} kalah`],
+        ['Target harian', sn.dailyTarget > 0 ? money(sn.dailyTarget) : 'tidak ada'],
+        ['Hari ini', t ? `${t.trades} trade · ${money(t.pnl, { sign: true })}` : '—'],
+        ['Aset', c.assets.join(' · ')],
+      ]
+    : [
+        ['Strategi', 'Model (lama)'],
+        ['Aset', c.assets.join(' · ')],
+        ['Maks. per order', money(c.maxOrderUsd)],
+        ['Batas exposure', money(c.maxOpenExposureUsd)],
+        ['Rem rugi harian', money(c.maxDailyLossUsd)],
+        ['Edge minimal', (c.minEdge * 100).toFixed(0) + '¢'],
+        ['Fraksi Kelly', c.kellyFraction],
+        ['Mulai trading', `sisa ≤ ${c.tradeWhenSecondsLeft}s`],
+        ['Tutup order', `sisa ≤ ${c.stopSecondsLeft}s`],
+        ['Pengali volatilitas', `×${c.sigmaMultiplier}`],
+      ];
   $('#params').innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
 }
 
@@ -505,7 +522,7 @@ function renderHistory(s) {
       const predSide = h.pUp >= 0.5 ? 'UP' : 'DOWN';
       const pred = `${predSide} ${pct(Math.max(h.pUp, 1 - h.pUp), 0)} ${h.correct ? '✓' : '✗'}`;
       const pos = h.trade
-        ? `${h.trade.side.toUpperCase()} ${Math.round(h.trade.quantity)} @ ${h.trade.price.toFixed(2)}${isNum(h.trade.secondsLeft) ? ` · sisa ${h.trade.secondsLeft}s` : ''}${h.trade.probe ? ' · probe' : ''}`
+        ? `${h.trade.side.toUpperCase()} ${Math.round(h.trade.quantity)} @ ${h.trade.price.toFixed(2)}${isNum(h.trade.secondsLeft) ? ` · sisa ${h.trade.secondsLeft}s` : ''}${h.trade.probe ? ' · probe' : ''}${h.trade.strategy === 'sniper' ? ' · sniper' : ''}`
         : '—';
       const pnl = h.trade ? deltaHtml(h.trade.pnl, money(h.trade.pnl, { sign: true })) : '—';
       return `<tr><td>${hhmm(h.endMs)}</td><td>${esc(h.asset)}</td><td>${res}</td><td>${esc(pred)}</td><td>${esc(pos)}</td><td class="num">${pnl}</td></tr>`;

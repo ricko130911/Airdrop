@@ -75,6 +75,7 @@ export function tradesFromRecords(records) {
       won,
       pnl,
       probe: !!p.probe,
+      strategy: p.strategy ?? 'model',
       secondsLeft: p.fill?.secondsLeft ?? null,
       prob: p.fill?.prob ?? null,
       edge: p.fill?.edge ?? null,
@@ -222,8 +223,9 @@ export class Learner {
   zoneVerdict(asset, secondsLeft) {
     if (!this.enabled) return { blocked: false };
     const tk = timeBucket(secondsLeft);
-    const byTime = zoneEval(this.trades.filter((t) => t.secondsLeft !== null && timeBucket(t.secondsLeft) === tk), this.minZone);
-    const byAsset = zoneEval(this.trades.filter((t) => t.asset === asset), this.minZone);
+    const modelTrades = this.trades.filter((t) => t.strategy !== 'sniper');
+    const byTime = zoneEval(modelTrades.filter((t) => t.secondsLeft !== null && timeBucket(t.secondsLeft) === tk), this.minZone);
+    const byAsset = zoneEval(modelTrades.filter((t) => t.asset === asset), this.minZone);
     if (byTime.blocked) {
       return { blocked: true, reason: `zona ${tk} rugi (rata² ${(byTime.meanRet * 100).toFixed(1)}%/trade, ${byTime.n} trade)` };
     }
@@ -238,7 +240,7 @@ export class Learner {
     const trades = this.trades;
     const withZone = (groups, keyFn) =>
       groups.map((g) => {
-        const z = zoneEval(trades.filter((t) => keyFn(t) === g.key), this.minZone);
+        const z = zoneEval(trades.filter((t) => t.strategy !== 'sniper' && keyFn(t) === g.key), this.minZone);
         return { ...g, recentMeanRet: z.meanRet, recentN: z.n, tStat: z.t, blocked: this.enabled && z.blocked };
       });
     const timeKey = (t) => (t.secondsLeft === null ? null : timeBucket(t.secondsLeft));
@@ -252,6 +254,8 @@ export class Learner {
       total: summarize(trades),
       byTime,
       byAsset,
+      byStrategy: groupSummary(trades, (t) => t.strategy),
+      sniper: summarize(trades.filter((t) => t.strategy === 'sniper')),
       byProb: groupSummary(trades, (t) => (t.prob === null ? null : probBucket(t.prob)), PROB_BUCKETS.map((b) => b.key)).map((g) => ({
         ...g,
         avgProb: avg(trades.filter((t) => t.prob !== null && probBucket(t.prob) === g.key).map((t) => t.prob)),
