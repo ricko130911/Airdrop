@@ -435,7 +435,11 @@ function renderParams(s) {
         ['Peluang minimal', pct(sn.minProb, 0)],
         ['Harga beli maks.', sn.maxPrice.toFixed(2)],
         ['Untung minimal', (sn.minEv * 100).toFixed(1) + '¢ / kontrak'],
-        ['Modal per tembakan', money(sn.usd)],
+        ['Modal per tembakan', `${money(sn.usd)} – ${money(sn.maxUsd)} (dinamis)`],
+        [
+          'Naikkan taruhan',
+          sn.trust?.trusted ? 'aktif (sniper terbukti untung)' : `belum: ${sn.trust?.reason ?? '-'}`,
+        ],
         ['Model fee', sn.feeModel === 'risk' ? 'risk-shaped' : 'flat (konservatif)'],
         ['Rem harian', `${t ? t.snipeLosses : 0} / ${sn.maxLossesPerDay} kalah`],
         ['Target harian', sn.dailyTarget > 0 ? money(sn.dailyTarget) : 'tidak ada'],

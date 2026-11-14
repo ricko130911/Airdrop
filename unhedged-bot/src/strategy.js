@@ -136,7 +136,7 @@ export function feeFor(price, rate, model = 'flat') {
  * @param {object} a.cfg         snipeMinProb, snipeMaxPrice, snipeMinEv, snipeUsd, feeModel
  * @param {number} a.exposureLeftUsd
  */
-export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUsd }) {
+export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUsd, bankroll = 0, allowScale = false }) {
   if (!Number.isFinite(prob)) return { action: 'skip', reason: 'peluang tidak tersedia' };
   if (prob < cfg.snipeMinProb) return { action: 'skip', reason: `belum pasti (p=${prob.toFixed(3)} < ${cfg.snipeMinProb})` };
   const ask = book?.[side]?.bestAsk ?? null;
@@ -145,7 +145,8 @@ export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUs
   const fee = feeFor(ask, feeRate, cfg.feeModel);
   const ev = prob - ask - fee; // untung harapan per kontrak (USD)
   if (ev < cfg.snipeMinEv) return { action: 'skip', reason: `untung tipis (${(ev * 100).toFixed(1)}¢ < ${(cfg.snipeMinEv * 100).toFixed(1)}¢)` };
-  const budget = Math.min(cfg.snipeUsd, Math.max(0, exposureLeftUsd));
+  const sizing = snipeStake({ prob, cost: ask + fee, bankroll, cfg, allowScale });
+  const budget = Math.min(sizing.usd, Math.max(0, exposureLeftUsd));
   const quantity = Math.floor(budget / (ask + fee));
   if (quantity < 1) return { action: 'skip', reason: exposureLeftUsd <= 0 ? 'batas exposure tercapai' : 'modal per tembakan terlalu kecil' };
   return {
@@ -160,5 +161,23 @@ export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUs
     ev,
     edgeAtAsk: ev,
     fillsNow: true,
+    sizing,
   };
+}
+
+/**
+ * Ukuran tembakan dinamis: makin yakin & makin besar untung per kontrak, makin besar taruhannya.
+ * Kelly untuk kontrak $1 yang dibeli seharga C (harga + fee) dengan peluang menang p:
+ *     f* = (p − C) / (1 − C)
+ * Dipakai sebagian kecil saja (SNIPE_KELLY_FRACTION) karena peluang model bisa salah,
+ * lalu dibatasi antara SNIPE_USD (minimum) dan SNIPE_MAX_USD (maksimum).
+ * Bila allowScale = false (sniper belum terbukti / baru kalah), selalu pakai minimum.
+ */
+export function snipeStake({ prob, cost, bankroll, cfg, allowScale }) {
+  const min = cfg.snipeUsd;
+  const max = Math.max(min, cfg.snipeMaxUsd ?? min);
+  if (!allowScale || !(cost > 0 && cost < 1) || !(bankroll > 0)) return { usd: min, kelly: null, scaled: false };
+  const kelly = Math.max(0, (prob - cost) / (1 - cost));
+  const usd = Math.min(max, Math.max(min, bankroll * (cfg.snipeKellyFraction ?? 0.05) * kelly));
+  return { usd, kelly, scaled: usd > min + 1e-9 };
 }

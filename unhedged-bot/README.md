@@ -24,8 +24,13 @@ Karena itu strategi default sekarang adalah **sniper**:
    order yang tidak langsung terisi dibatalkan, tidak dikejar.
 5. **Hanya bila masih untung setelah fee:** `peluang − harga − fee ≥ SNIPE_MIN_EV` (1.5 sen/kontrak),
    dengan harga beli maksimum `SNIPE_MAX_PRICE` (0.95).
-6. **Modal kecil dan tetap per tembakan** (`SNIPE_USD`, default $3), dengan pemeriksaan setiap 1 detik
-   selama jendela tembak.
+6. **Ukuran taruhan dinamis:** makin yakin dan makin besar untung per kontrak, makin besar taruhannya
+   (Kelly yang diperkecil, `SNIPE_KELLY_FRACTION` × saldo), antara `SNIPE_USD` ($3) dan `SNIPE_MAX_USD` ($10).
+   Taruhan **baru boleh naik** bila sniper sudah terbukti: minimal `SNIPE_TRUST_TRADES` trade, total
+   untung, dan *akurasi yang terbukti secara statistik* (batas bawah 95% Wilson) di atas titik impas.
+   Contoh: 35/35 menang baru membuktikan akurasi ~92.8%, sedangkan beli di 0.90 + fee butuh ~94.5%,
+   jadi taruhan masih minimum. Setelah kalah sekali hari itu, taruhan kembali ke minimum sampai besok.
+   Bot memeriksa harga setiap 1 detik selama jendela tembak.
 7. **Rem harian:** setelah kalah `SNIPE_MAX_LOSSES_PER_DAY` kali (default 2), sniper berhenti sampai
    besok (UTC). Opsional: berhenti setelah untung harian mencapai `DAILY_PROFIT_TARGET_USD`.
 
@@ -299,7 +304,10 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `SNIPE_MIN_PROB` | `0.97` | Peluang menang minimal |
 | `SNIPE_MAX_PRICE` | `0.95` | Harga beli maksimum |
 | `SNIPE_MIN_EV` | `0.015` | Untung minimal per kontrak setelah fee |
-| `SNIPE_USD` | `3` | Modal per tembakan |
+| `SNIPE_USD` | `3` | Modal minimum per tembakan |
+| `SNIPE_MAX_USD` | `10` | Modal maksimum per tembakan saat sangat yakin |
+| `SNIPE_KELLY_FRACTION` | `0.05` | Agresivitas kenaikan taruhan (fraksi saldo × Kelly) |
+| `SNIPE_TRUST_TRADES` | `30` | Minimal trade sniper sebelum taruhan boleh naik |
 | `SNIPE_MAX_LOSSES_PER_DAY` | `2` | Rem: berhenti sampai besok setelah kalah sebanyak ini |
 | `DAILY_PROFIT_TARGET_USD` | `0` | Berhenti setelah untung harian mencapai angka ini (0 = tanpa target) |
 | `FEE_MODEL` | `flat` | `flat` = tarif × harga (konservatif), `risk` = tarif × min(harga, 1−harga) |

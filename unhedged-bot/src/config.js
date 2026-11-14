@@ -70,6 +70,10 @@ export function loadConfig() {
     snipeMaxPrice: num('SNIPE_MAX_PRICE', 0.95),
     snipeMinEv: num('SNIPE_MIN_EV', 0.015),
     snipeUsd: num('SNIPE_USD', 3),
+    // Ukuran dinamis: naik bila yakin, tapi hanya setelah sniper terbukti
+    snipeMaxUsd: num('SNIPE_MAX_USD', 10),
+    snipeKellyFraction: num('SNIPE_KELLY_FRACTION', 0.05),
+    snipeTrustTrades: num('SNIPE_TRUST_TRADES', 30),
     snipePollMs: num('SNIPE_POLL_MS', 1000),
     snipeMaxLossesPerDay: num('SNIPE_MAX_LOSSES_PER_DAY', 2),
     dailyProfitTargetUsd: num('DAILY_PROFIT_TARGET_USD', 0),
@@ -118,5 +122,7 @@ function validate(cfg) {
   if (!(cfg.snipeMinProb > 0.5 && cfg.snipeMinProb < 1)) errs.push('SNIPE_MIN_PROB harus di antara 0.5 dan 1');
   if (!(cfg.snipeMaxPrice > 0 && cfg.snipeMaxPrice < 1)) errs.push('SNIPE_MAX_PRICE harus di antara 0 dan 1');
   if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
+  if (cfg.snipeMaxUsd < cfg.snipeUsd) errs.push('SNIPE_MAX_USD harus >= SNIPE_USD');
+  if (!(cfg.snipeKellyFraction > 0 && cfg.snipeKellyFraction <= 0.5)) errs.push('SNIPE_KELLY_FRACTION harus di (0, 0.5]');
   if (errs.length) throw new Error('Konfigurasi tidak valid:\n - ' + errs.join('\n - '));
 }

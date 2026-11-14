@@ -235,6 +235,21 @@ export class Learner {
     return { blocked: false };
   }
 
+  /**
+   * Apakah sniper sudah "dipercaya" untuk menaikkan taruhan?
+   * Syarat: minimal `minTrades` trade sniper DAN win rate di atas titik impas + 1%.
+   */
+  sniperTrust(minTrades) {
+    const st = summarize(this.trades.filter((t) => t.strategy === 'sniper'));
+    // Batas bawah keyakinan 95% (Wilson) dari win rate: "akurasi minimal yang sudah terbukti"
+    const lower = st.n ? wilsonLower(st.wins, st.n) : null;
+    let reason = null;
+    if (st.n < minTrades) reason = `baru ${st.n}/${minTrades} trade`;
+    else if (!(st.pnl > 0)) reason = 'total sniper masih rugi';
+    else if (lower < st.breakeven) reason = `akurasi terbukti ${(lower * 100).toFixed(1)}% < impas ${(st.breakeven * 100).toFixed(1)}%`;
+    return { trusted: reason === null, reason, n: st.n, need: minTrades, winrate: st.winrate, provenWinrate: lower, breakeven: st.breakeven, pnl: st.pnl };
+  }
+
   /** Laporan untuk dashboard / CLI. */
   report() {
     const trades = this.trades;
@@ -263,6 +278,14 @@ export class Learner {
       calibration: CHECKPOINTS.map((c) => ({ checkpoint: c, ...(this.fits.get(c) ?? { k: 1, n: 0, active: false }) })),
     };
   }
+}
+
+/** Batas bawah interval Wilson (satu sisi, ~95%) untuk proporsi menang. */
+export function wilsonLower(wins, n, z = 1.645) {
+  if (!n) return 0;
+  const p = wins / n;
+  const z2 = z * z;
+  return (p + z2 / (2 * n) - z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / (1 + z2 / n);
 }
 
 function avg(xs) {

@@ -703,13 +703,33 @@ export class Bot {
     const side = est.pUp >= 0.5 ? 'up' : 'down';
     const sideProb = (p) => (side === 'up' ? p : 1 - p);
     const prob = Math.min(sideProb(est.pUp), sideProb(pUpRaw));
-    const d = decideSnipe({ prob, side, book: entry.book, feeRate: entry.feeRate ?? 0, cfg: this.cfg, exposureLeftUsd });
-    entry.lastDecision = d.action === 'buy' ? `TEMBAK ${side.toUpperCase()} @ ${d.price.toFixed(2)} · untung ~${(d.ev * 100).toFixed(1)}¢/kontrak` : `sniper: ${d.reason}`;
+    // Taruhan boleh dinaikkan hanya bila sniper sudah terbukti untung & belum kalah hari ini
+    const trust = this.learner.sniperTrust(this.cfg.snipeTrustTrades);
+    const allowScale = trust.trusted && today.snipeLosses === 0;
+    const d = decideSnipe({
+      prob,
+      side,
+      book: entry.book,
+      feeRate: entry.feeRate ?? 0,
+      cfg: this.cfg,
+      exposureLeftUsd,
+      bankroll: this.bankroll ?? 0,
+      allowScale,
+    });
+    let sizeNote = '';
+    if (d.action === 'buy') {
+      if (d.sizing.scaled) sizeNote = ` · taruhan dinaikkan ke $${d.stakeUsd.toFixed(2)} (yakin ${(prob * 100).toFixed(1)}%)`;
+      else if (!trust.trusted) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (belum terbukti: ${trust.reason})`;
+      else if (today.snipeLosses) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (sudah kalah hari ini)`;
+      else sizeNote = ` · taruhan $${d.stakeUsd.toFixed(2)}`;
+    }
+    entry.lastDecision =
+      d.action === 'buy' ? `TEMBAK ${side.toUpperCase()} @ ${d.price.toFixed(2)} · untung ~${(d.ev * 100).toFixed(1)}¢/kontrak${sizeNote}` : `sniper: ${d.reason}`;
     if (d.action !== 'buy') {
       this.log.debug(`${tag} ${info} -> sniper skip: ${d.reason}`);
       return;
     }
-    await this.placeOrder(entry, d, `${tag} [SNIPER]`, info);
+    await this.placeOrder(entry, d, `${tag} [SNIPER${d.sizing.scaled ? ' +' : ''}]`, info + sizeNote);
     this.simulateFill(entry, tag);
   }
 
@@ -837,7 +857,20 @@ export class Bot {
       exposureUsd: this.exposureUsd(),
       config: {
         strategy: c.strategy,
-        snipe: c.strategy === 'sniper' ? { minProb: c.snipeMinProb, maxPrice: c.snipeMaxPrice, minEv: c.snipeMinEv, usd: c.snipeUsd, maxLossesPerDay: c.snipeMaxLossesPerDay, dailyTarget: c.dailyProfitTargetUsd, feeModel: c.feeModel } : null,
+        snipe:
+          c.strategy === 'sniper'
+            ? {
+                minProb: c.snipeMinProb,
+                maxPrice: c.snipeMaxPrice,
+                minEv: c.snipeMinEv,
+                usd: c.snipeUsd,
+                maxUsd: c.snipeMaxUsd,
+                maxLossesPerDay: c.snipeMaxLossesPerDay,
+                dailyTarget: c.dailyProfitTargetUsd,
+                feeModel: c.feeModel,
+                trust: this.learner.sniperTrust(c.snipeTrustTrades),
+              }
+            : null,
         assets: c.assets,
         maxOrderUsd: c.maxOrderUsd,
         maxOpenExposureUsd: c.maxOpenExposureUsd,
