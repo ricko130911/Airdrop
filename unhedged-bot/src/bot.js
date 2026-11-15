@@ -1,4 +1,4 @@
-import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
+import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf, durationLabel } from './markets.js';
 import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, twapZ, brier } from './model.js';
 import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan } from './strategy.js';
 import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
@@ -33,6 +33,7 @@ export class Bot {
     this.history = []; // market yang sudah selesai (untuk dashboard)
     this.account = { available: null, total: null, lockedEngine: null, username: null };
     this.lastPriceRefresh = 0;
+    this.stratStats = {}; // statistik per strategi (sniper, sniper-probe, model)
     // Pembelajaran dari hasil sendiri: kalibrasi peluang + deteksi zona rugi
     this.learner = new Learner({
       enabled: cfg.adaptive !== false,
@@ -167,6 +168,7 @@ export class Bot {
           asset: a.asset,
           sides: a.sides,
           window: a.window,
+          durationSec: a.durationSec,
           type: marketType(a.market),
           strike: null,
           order: null, // {id, side, outcome, price, quantity, dry}
@@ -351,7 +353,7 @@ export class Bot {
     const m0 = entry.market;
     await this.refreshMarketDetail(entry);
     const m = entry.market ?? m0;
-    const tag = `[${entry.asset} ${Math.round(secondsLeft)}s]`;
+    const tag = `[${entry.asset}${entry.durationSec && entry.durationSec !== 300 ? ' ' + durationLabel(entry.durationSec) : ''} ${Math.round(secondsLeft)}s]`;
 
     // Arbitrase complete set (UP + DOWN < $1 setelah fee)
     const arb = completeSetArb(entry.book, entry.feeRate);
@@ -639,6 +641,7 @@ export class Bot {
       asset: entry.asset,
       question: entry.market.question ?? entry.market.title ?? '',
       endMs: entry.window.endMs,
+      durationSec: entry.durationSec ?? null,
       outcomeUp,
       source,
       strike: entry.strike,
@@ -676,14 +679,20 @@ export class Bot {
     let trades = 0;
     let wins = 0;
     let snipeLosses = 0;
+    let sniperPnl = 0;
+    let sniperTrades = 0;
     for (const h of this.history) {
       if (!h.trade || new Date(h.ts).toISOString().slice(0, 10) !== day) continue;
       trades++;
       pnl += h.trade.pnl;
+      if (String(h.trade.strategy ?? '').startsWith('sniper')) {
+        sniperPnl += h.trade.pnl;
+        sniperTrades++;
+      }
       if (h.trade.won) wins++;
       else if (h.trade.strategy === 'sniper') snipeLosses++;
     }
-    return { day, pnl, trades, wins, snipeLosses };
+    return { day, pnl, trades, wins, snipeLosses, sniperPnl, sniperTrades };
   }
 
   /**
@@ -800,12 +809,19 @@ export class Bot {
     const [t] = tradesFromRecords([r]);
     let trade = null;
     if (t) {
-      trade = { side: t.side, price: t.price, quantity: t.quantity, won: t.won, pnl: t.pnl, probe: t.probe, strategy: t.strategy, secondsLeft: t.secondsLeft, prob: t.prob, edge: t.edge };
+      const key = t.strategy ?? 'model';
+      const ss = (this.stratStats[key] ??= { trades: 0, wins: 0, pnl: 0, cost: 0 });
+      ss.trades++;
+      ss.pnl += t.pnl;
+      ss.cost += t.cost;
+      if (t.won) ss.wins++;
+      trade = { side: t.side, price: t.price, quantity: t.quantity, won: t.won, pnl: t.pnl, probe: t.probe, strategy: t.strategy, secondsLeft: t.secondsLeft, prob: t.prob, edge: t.edge, durationSec: r.durationSec ?? null };
       s.paperPnl += t.pnl;
       s.trades++;
       if (t.won) s.wins++;
     }
     this.history.push({
+      durationSec: r.durationSec ?? null,
       ts: Date.parse(r.ts) || Date.now(),
       endMs: r.endMs ?? (Date.parse(r.ts) || Date.now()),
       marketId: r.marketId,
@@ -851,6 +867,7 @@ export class Bot {
         id: e.market.id,
         asset: e.asset,
         type: e.type,
+        durationSec: e.durationSec ?? null,
         question: e.market.question ?? e.market.title ?? '',
         startMs: e.window.startMs,
         endMs: e.window.endMs,
@@ -914,6 +931,7 @@ export class Bot {
               }
             : null,
         assets: c.assets,
+        durations: c.marketDurations,
         maxOrderUsd: c.maxOrderUsd,
         maxOpenExposureUsd: c.maxOpenExposureUsd,
         maxDailyLossUsd: c.maxDailyLossUsd,
@@ -931,6 +949,7 @@ export class Bot {
         wins: s.wins,
         pnl: s.paperPnl,
         today: this.todayStats(),
+        byStrategy: this.stratStats,
       },
       markets,
       prices,

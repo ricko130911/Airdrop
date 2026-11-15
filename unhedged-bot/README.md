@@ -14,7 +14,8 @@ Simulasi 610 trade dengan strategi lama (menebak arah 1–3 menit sebelum tutup)
 order yang terisi justru yang salah, karena trader lain lebih cepat (*adverse selection*), ditambah fee 5%.
 Karena itu strategi default sekarang adalah **sniper**:
 
-1. **Hanya menembak di detik-detik terakhir** (default sisa 45 sampai 4 detik). Pada saat itu sebagian
+1. **Hanya menembak di detik-detik terakhir** (default sisa 45 sampai 4 detik) setiap round market
+   **5 menit, 15 menit, dan 1 jam** (`MARKET_DURATIONS`). Pada saat itu sebagian
    besar rata-rata 60 detik sudah pasti dari data per detik Binance/Bybit.
 2. **Hanya bila hampir pasti:** peluang menang ≥ `SNIPE_MIN_PROB` (97%). Bot memakai peluang yang
    paling konservatif antara model mentah dan model terkalibrasi.
@@ -331,6 +332,7 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `ADAPTIVE_MIN_TRADES` | `25` | Minimal trade per zona sebelum zona boleh diblokir |
 | `CALIBRATION_MIN_SAMPLES` | `40` | Minimal market per titik waktu sebelum kalibrasi aktif |
 | `PROBE_TRADES` | `true` | Di zona yang diblokir tetap kirim order 1 kontrak untuk belajar |
+| `MARKET_DURATIONS` | `300,900,3600` | Durasi market yang diikuti (detik): 5 menit, 15 menit, 1 jam |
 | `MARKET_REGEX` | kosong | Regex manual untuk memilih market bila deteksi otomatis gagal |
 | `DASHBOARD_PORT` | `3005` | Port dashboard web |
 | `DASHBOARD_HOST` | `0.0.0.0` | `0.0.0.0` = bisa diakses lewat IP VPS, `127.0.0.1` = hanya lokal/SSH tunnel |

@@ -76,6 +76,7 @@ export function tradesFromRecords(records) {
       pnl,
       probe: !!p.probe,
       strategy: p.strategy ?? 'model',
+      durationSec: r.durationSec ?? 300,
       secondsLeft: p.fill?.secondsLeft ?? null,
       prob: p.fill?.prob ?? null,
       edge: p.fill?.edge ?? null,
@@ -295,6 +296,7 @@ export class Learner {
       byTime,
       byAsset,
       byStrategy: groupSummary(trades, (t) => t.strategy),
+      byDuration: groupSummary(trades.filter((t) => String(t.strategy).startsWith('sniper')), (t) => t.durationSec),
       sniper: summarize(trades.filter((t) => t.strategy === 'sniper')),
       byProb: groupSummary(trades, (t) => (t.prob === null ? null : probBucket(t.prob)), PROB_BUCKETS.map((b) => b.key)).map((g) => ({
         ...g,

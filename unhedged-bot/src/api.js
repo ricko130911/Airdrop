@@ -18,6 +18,7 @@ export class UnhedgedApi {
     this.timeoutMs = timeoutMs;
     this.log = logger;
     this.authCalls = []; // timestamp panggilan ber-auth, untuk menjaga batas 60 req/menit
+    this.publicCalls = []; // timestamp panggilan publik, batas resmi 600 req/menit
   }
 
   async throttleAuth() {
@@ -30,6 +31,18 @@ export class UnhedgedApi {
       await sleep(60_000 - (now - this.authCalls[0]) + 50);
     }
     this.authCalls.push(Date.now());
+  }
+
+  async throttlePublic() {
+    // Batas resmi 600 req/menit per IP; jaga di 8 req/detik (480/menit) agar aman
+    const LIMIT = 8;
+    for (;;) {
+      const now = Date.now();
+      this.publicCalls = this.publicCalls.filter((t) => now - t < 1000);
+      if (this.publicCalls.length < LIMIT) break;
+      await sleep(1000 - (now - this.publicCalls[0]) + 5);
+    }
+    this.publicCalls.push(Date.now());
   }
 
   /**
@@ -56,6 +69,7 @@ export class UnhedgedApi {
     let lastErr;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (throttle) await this.throttleAuth();
+      else if (!auth) await this.throttlePublic();
       try {
         const res = await fetch(url, {
           method,

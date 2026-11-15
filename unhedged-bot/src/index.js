@@ -73,7 +73,7 @@ async function discover(api, cfg) {
     const b = bookTop(m, a.sides);
     const f = (x) => (x === null || x === undefined ? '-' : x.toFixed(2));
     console.log(
-      `- [${a.asset}] ${m.question ?? m.title} | tipe=${marketType(m)} | tutup dalam ${left}s | id=${m.id}\n` +
+      `- [${a.asset} ${a.durationSec >= 3600 ? a.durationSec / 3600 + ' jam' : Math.round(a.durationSec / 60) + ' mnt'}] ${m.question ?? m.title} | tipe=${marketType(m)} | tutup dalam ${left}s | id=${m.id}\n` +
         `    sumber resolusi: ${r.venue ?? '?'} ${r.symbol ?? '?'} (${r.method ?? '?'}) | fee taker ${(marketTakerFee(m) * 100).toFixed(1)}%\n` +
         `    acuan: ${strike ? `${strike.value} (${strike.source})` : 'belum ada (window belum dimulai)'}\n` +
         `    order book: UP bid ${f(b.up.bestBid)} / ask ${f(b.up.bestAsk)} · DOWN bid ${f(b.down.bestBid)} / ask ${f(b.down.bestAsk)}`,
@@ -135,6 +135,11 @@ function analyze(cfg) {
   console.log('\n== Menurut strategi ==');
   console.log(head);
   for (const g of r.byStrategy) console.log(row(g, g.key === 'sniper-probe' ? 'probe' : g.key));
+  if (r.byDuration.length) {
+    console.log('\n== Sniper menurut durasi market ==');
+    console.log(head);
+    for (const g of r.byDuration) console.log(row(g, g.key >= 3600 ? `${g.key / 3600} jam` : `${Math.round(g.key / 60)} mnt`));
+  }
   console.log('\n== Menurut sisa waktu saat order terisi ==');
   console.log(head);
   for (const g of r.byTime) console.log(row(g));

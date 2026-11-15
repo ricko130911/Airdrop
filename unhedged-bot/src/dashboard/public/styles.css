@@ -488,3 +488,5 @@ h2::before {
 /* Tampilan publik (tanpa login): tombol kontrol disembunyikan */
 body.view-only .controls,
 body.view-only [data-action] { display: none !important; }
+
+.legacy-note { margin-top: 6px; font-size: 11px; color: var(--text-muted); }

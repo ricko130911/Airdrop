@@ -15,7 +15,18 @@ const UP_LABEL = /\b(up|higher|above|rise|naik|long)\b/i;
 const DOWN_LABEL = /\b(down|lower|below|fall|turun|short)\b/i;
 const YES_LABEL = /^\s*(yes|ya)\s*$/i;
 const NO_LABEL = /^\s*(no|tidak)\s*$/i;
-const FIVE_MIN_TEXT = /\b5\s*-?\s*(m|min|mins|minute|minutes|menit)\b/i;
+const DURATION_TEXT = {
+  300: /\b5\s*-?\s*(m|min|mins|minute|minutes|menit)\b/i,
+  900: /\b15\s*-?\s*(m|min|mins|minute|minutes|menit)\b/i,
+  3600: /\b(1\s*-?\s*(h|hr|hour|jam)|60\s*-?\s*(m|min|mins|minutes|menit))\b/i,
+};
+
+/** Label durasi singkat untuk tampilan (5 mnt, 15 mnt, 1 jam). */
+export function durationLabel(sec) {
+  if (!sec) return '?';
+  if (sec % 3600 === 0) return `${sec / 3600} jam`;
+  return `${Math.round(sec / 60)} mnt`;
+}
 
 const START_FIELDS = ['startTime', 'openTime', 'windowStart', 'openStartsAt', 'tradingStartTime', 'startsAt'];
 const END_FIELDS = ['endTime', 'closeTime', 'windowEnd', 'resolvesAt', 'endsAt', 'resolutionTime'];
@@ -148,7 +159,8 @@ export function outcomeSides(m) {
  * Periksa apakah market adalah market Up/Down 5 menit untuk salah satu aset.
  * @returns {{ok:boolean, reason:string, asset?:string, sides?:object, window?:object}}
  */
-export function classifyMarket(m, { assets, durationSec = 300, marketRegex = '' }) {
+export function classifyMarket(m, { assets, durations, durationSec = 300, marketRegex = '' }) {
+  const allowed = durations?.length ? durations : [durationSec];
   const text = marketText(m);
   const matched = assets.filter((a) => assetPattern(a).test(text));
   if (matched.length === 0) return { ok: false, reason: 'aset tidak dikenali' };
@@ -163,21 +175,24 @@ export function classifyMarket(m, { assets, durationSec = 300, marketRegex = '' 
     return { ok: false, asset, reason: 'bukan market up/down' };
   }
 
-  const win = windowTimes(m, durationSec);
+  let win = windowTimes(m, allowed[0]);
   if (win.endMs === null) return { ok: false, asset, reason: 'endTime tidak ada' };
 
-  if (!marketRegex) {
-    const tol = 60_000;
-    let durationOk = false;
-    if (win.startSource && win.startSource !== 'end-duration') {
-      durationOk = Math.abs(win.endMs - win.startMs - durationSec * 1000) <= tol;
-    } else if (FIVE_MIN_TEXT.test(text)) {
-      durationOk = true;
-    } else {
+  // Tentukan durasi market: dari waktu mulai resmi, lalu teks judul, lalu createdAt
+  let matchedDuration = null;
+  if (win.startSource && win.startSource !== 'end-duration') {
+    const actual = (win.endMs - win.startMs) / 1000;
+    matchedDuration = allowed.find((d) => Math.abs(actual - d) <= Math.max(60, d * 0.1)) ?? null;
+  } else {
+    matchedDuration = allowed.find((d) => DURATION_TEXT[d]?.test(text)) ?? null;
+    if (matchedDuration === null) {
       const created = parseTime(m.createdAt);
-      if (created !== null) durationOk = Math.abs(win.endMs - created - durationSec * 1000) <= 90_000;
+      if (created !== null) matchedDuration = allowed.find((d) => Math.abs(win.endMs - created - d * 1000) <= 90_000) ?? null;
     }
-    if (!durationOk) return { ok: false, asset, reason: 'durasi bukan 5 menit / tidak diketahui' };
+    if (matchedDuration !== null) win = windowTimes(m, matchedDuration);
+  }
+  if (matchedDuration === null && !marketRegex) {
+    return { ok: false, asset, reason: `durasi tidak termasuk ${allowed.map(durationLabel).join('/')} / tidak diketahui` };
   }
 
   const sides = outcomeSides(m);
@@ -186,7 +201,7 @@ export function classifyMarket(m, { assets, durationSec = 300, marketRegex = '' 
     return { ok: false, asset, reason: `outcome tidak bisa dipetakan ke Up/Down (${labels || 'tanpa outcomes'})` };
   }
 
-  return { ok: true, reason: 'ok', asset, sides, window: win };
+  return { ok: true, reason: 'ok', asset, sides, window: win, durationSec: matchedDuration ?? allowed[0] };
 }
 
 /**
@@ -218,7 +233,7 @@ export async function discoverMarkets(api, cfg, { includeRejected = false } = {}
   const accepted = [];
   const rejected = [];
   for (const m of seen.values()) {
-    const c = classifyMarket(m, { assets: cfg.assets, durationSec: cfg.marketDurationSec, marketRegex: cfg.marketRegex });
+    const c = classifyMarket(m, { assets: cfg.assets, durations: cfg.marketDurations, durationSec: cfg.marketDurationSec, marketRegex: cfg.marketRegex });
     if (c.ok) accepted.push({ market: m, ...c });
     else if (includeRejected && c.asset) rejected.push({ market: m, ...c });
   }

@@ -126,16 +126,43 @@ function render(s) {
   $('#uptime').textContent = 'Uptime ' + duration(s.now - s.startedAt);
 }
 
+/** Gabungan statistik sniper (tembakan + probe) dari statistik per strategi. */
+function sniperStats(st) {
+  const by = st.byStrategy ?? {};
+  const a = by.sniper ?? { trades: 0, wins: 0, pnl: 0 };
+  const b = by['sniper-probe'] ?? { trades: 0, wins: 0, pnl: 0 };
+  return {
+    trades: a.trades + b.trades,
+    wins: a.wins + b.wins,
+    pnl: a.pnl + b.pnl,
+    shots: a,
+    probes: b,
+    legacy: by.model ?? { trades: 0, wins: 0, pnl: 0 },
+  };
+}
+
 function renderKpis(s) {
   const st = s.stats;
   const live = s.mode === 'LIVE';
-  const pnl = live && isNum(s.account.dayPnl) ? s.account.dayPnl : st.pnl;
-  $('#pnlLabel').textContent = live ? 'PnL Hari Ini' : 'PnL Simulasi';
-  $('#kpiPnl').textContent = money(pnl, { sign: true });
-  $('#kpiPnlFoot').innerHTML = deltaHtml(st.pnl, `${st.trades} trade · bot ${money(st.pnl, { sign: true })}`);
-
-  $('#kpiWin').textContent = st.trades ? pct(st.wins / st.trades) : '—';
-  $('#kpiWinFoot').textContent = st.trades ? `${st.wins} menang dari ${st.trades}` : 'belum ada trade';
+  if (s.config.snipe) {
+    // Mode sniper: kartu utama HANYA hasil sniper; strategi lama disebut sebagai catatan
+    const sn = sniperStats(st);
+    $('#pnlLabel').textContent = live ? 'PnL Sniper (live)' : 'PnL Sniper';
+    $('#kpiPnl').textContent = money(sn.pnl, { sign: true });
+    const today = st.today ? ` · hari ini ${money(st.today.sniperPnl ?? 0, { sign: true })}` : '';
+    $('#kpiPnlFoot').innerHTML =
+      deltaHtml(sn.pnl, `${sn.shots.trades} tembakan + ${sn.probes.trades} probe${today}`) +
+      (sn.legacy.trades ? `<div class="legacy-note">Strategi lama (tidak dihitung): ${money(sn.legacy.pnl, { sign: true })} dari ${sn.legacy.trades} trade</div>` : '');
+    $('#kpiWin').textContent = sn.trades ? pct(sn.wins / sn.trades) : '—';
+    $('#kpiWinFoot').textContent = sn.trades ? `${sn.wins} menang dari ${sn.trades} (sniper)` : 'belum ada tembakan';
+  } else {
+    const pnl = live && isNum(s.account.dayPnl) ? s.account.dayPnl : st.pnl;
+    $('#pnlLabel').textContent = live ? 'PnL Hari Ini' : 'PnL Simulasi';
+    $('#kpiPnl').textContent = money(pnl, { sign: true });
+    $('#kpiPnlFoot').innerHTML = deltaHtml(st.pnl, `${st.trades} trade · bot ${money(st.pnl, { sign: true })}`);
+    $('#kpiWin').textContent = st.trades ? pct(st.wins / st.trades) : '—';
+    $('#kpiWinFoot').textContent = st.trades ? `${st.wins} menang dari ${st.trades}` : 'belum ada trade';
+  }
 
   $('#kpiAcc').textContent = pct(st.accuracy);
   $('#kpiAccFoot').textContent = `Brier ${isNum(st.brier) ? st.brier.toFixed(3) : '—'} · ${st.settled} market`;
@@ -192,6 +219,11 @@ function renderTickers(s) {
 }
 
 // ---------------------------------------------------------------- markets
+function durLabel(sec) {
+  if (!sec) return '5 mnt';
+  return sec >= 3600 ? `${sec / 3600} jam` : `${Math.round(sec / 60)} mnt`;
+}
+
 function phaseOf(m, cfg) {
   if (m.secondsLeft <= 0) return 'Selesai';
   if (m.secondsLeft <= cfg.stopSecondsLeft) return 'Ditutup';
@@ -227,7 +259,7 @@ function renderMarkets(s) {
             <div class="ring-label" data-ring-label>—</div>
           </div>
           <div class="market-title">
-            <div class="a">${esc(m.asset)} <span class="tag ${phase === 'Trading' ? 'gold' : ''}">${phase}</span><span class="tag">${esc(m.type === 'PARIMUTUEL' ? 'Pool' : 'Order Book')}</span></div>
+            <div class="a">${esc(m.asset)} <span class="tag ${phase === 'Trading' ? 'gold' : ''}">${phase}</span><span class="tag">${esc(durLabel(m.durationSec))}</span></div>
             <div class="q" title="${esc(m.question)}">${esc(m.question)}</div>
           </div>
         </div>
@@ -263,16 +295,18 @@ function bookRow(m) {
   const b = m.book;
   if (!b) return '';
   const fee = isNum(m.feeRate) ? m.feeRate : 0;
+  const feeModel = state?.config?.snipe?.feeModel ?? 'flat';
+  const feeOf = (p) => (feeModel === 'official' ? fee * p * (1 - p) : feeModel === 'risk' ? fee * Math.min(p, 1 - p) : fee * p);
   const cell = (side, label) => {
     const ask = b[side]?.bestAsk;
     const prob = isNum(m.pUp) ? (side === 'up' ? m.pUp : 1 - m.pUp) : null;
-    const edge = isNum(ask) && isNum(prob) ? prob - ask * (1 + fee) : null;
+    const edge = isNum(ask) && isNum(prob) ? prob - ask - feeOf(ask) : null;
     const edgeTxt = isNum(edge) ? `${edge >= 0 ? '+' : '−'}${Math.abs(edge * 100).toFixed(1)}¢` : '';
     return `<div><div class="k"><i class="sw sw-${side}" style="width:8px;height:8px"></i> Ask ${esc(label)}</div>
       <div class="v">${isNum(ask) ? ask.toFixed(2) : '—'} ${edgeTxt ? `<span class="edge ${edge >= 0 ? 'pos' : 'neg'}">${edgeTxt}</span>` : ''}</div></div>`;
   };
   const arb = m.arb ? `<div class="arb">◆ Arbitrase: UP+DOWN = $${m.arb.costPerSet.toFixed(3)} · untung ~$${m.arb.profitPerSet.toFixed(3)}/set</div>` : '';
-  return `<div class="kv kv2">${cell('up', 'UP')}${cell('down', 'DOWN')}<div><div class="k">Fee</div><div class="v">${(fee * 100).toFixed(1)}%</div></div></div>${arb}`;
+  return `<div class="kv kv2">${cell('up', 'UP')}${cell('down', 'DOWN')}<div><div class="k">Fee taker</div><div class="v">${feeModel === 'official' ? fee.toFixed(2) + '·p(1−p)' : (fee * 100).toFixed(1) + '%'}</div></div></div>${arb}`;
 }
 
 function tickRings() {
@@ -406,11 +440,12 @@ function drawLine(el) {
 
 // ---------------------------------------------------------------- PnL, parameter, riwayat, log
 function renderPnl(s) {
-  const trades = s.history.filter((h) => h.trade);
+  const onlySniper = !!s.config.snipe;
+  const trades = s.history.filter((h) => h.trade && (!onlySniper || String(h.trade.strategy ?? '').startsWith('sniper')));
   let cum = 0;
   const pts = trades.map((h) => [h.ts, (cum += h.trade.pnl)]);
   if (pts.length) pts.unshift([pts[0][0] - 60_000, 0]);
-  $('#pnlNote').textContent = trades.length ? `${trades.length} trade · ${s.mode === 'LIVE' ? 'live' : 'simulasi'}` : '—';
+  $('#pnlNote').textContent = trades.length ? `${trades.length} trade${onlySniper ? ' sniper' : ''} · ${s.mode === 'LIVE' ? 'live' : 'simulasi'}` : '—';
   lineChart($('#pnlChart'), pts, {
     height: 260,
     zero: true,
@@ -451,8 +486,9 @@ function renderParams(s) {
         ],
         ['Rem harian', `${t ? t.snipeLosses : 0} / ${sn.maxLossesPerDay} kalah`],
         ['Target harian', sn.dailyTarget > 0 ? money(sn.dailyTarget) : 'tidak ada'],
-        ['Hari ini', t ? `${t.trades} trade · ${money(t.pnl, { sign: true })}` : '—'],
+        ['Hari ini', t ? `${t.sniperTrades ?? 0} trade sniper · ${money(t.sniperPnl ?? 0, { sign: true })}` : '—'],
         ['Aset', c.assets.join(' · ')],
+        ['Market', (c.durations ?? [300]).map(durLabel).join(' · ')],
       ]
     : [
         ['Strategi', 'Model (lama)'],
@@ -537,7 +573,7 @@ function renderHistory(s) {
         ? `${h.trade.side.toUpperCase()} ${Math.round(h.trade.quantity)} @ ${h.trade.price.toFixed(2)}${isNum(h.trade.secondsLeft) ? ` · sisa ${h.trade.secondsLeft}s` : ''}${h.trade.probe ? ' · probe' : ''}${h.trade.strategy === 'sniper' ? ' · sniper' : ''}`
         : '—';
       const pnl = h.trade ? deltaHtml(h.trade.pnl, money(h.trade.pnl, { sign: true })) : '—';
-      return `<tr><td>${hhmm(h.endMs)}</td><td>${esc(h.asset)}</td><td>${res}</td><td>${esc(pred)}</td><td>${esc(pos)}</td><td class="num">${pnl}</td></tr>`;
+      return `<tr><td>${hhmm(h.endMs)}</td><td>${esc(h.asset)}${h.durationSec && h.durationSec !== 300 ? ` <span class="muted-txt">${esc(durLabel(h.durationSec))}</span>` : ''}</td><td>${res}</td><td>${esc(pred)}</td><td>${esc(pos)}</td><td class="num">${pnl}</td></tr>`;
     })
     .join('');
 }

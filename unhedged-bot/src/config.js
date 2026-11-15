@@ -94,6 +94,11 @@ export function loadConfig() {
     probeTrades: bool('PROBE_TRADES', true),
 
     marketDurationSec: num('MARKET_DURATION_SEC', 300),
+    // Durasi market yang diikuti (detik): 300 = 5 menit, 900 = 15 menit, 3600 = 1 jam
+    marketDurations: str('MARKET_DURATIONS', '300,900,3600')
+      .split(',')
+      .map((x) => Number(x.trim()))
+      .filter((x) => Number.isFinite(x) && x > 0),
     marketRegex: str('MARKET_REGEX'),
     feedCategory: str('FEED_CATEGORY'),
 
