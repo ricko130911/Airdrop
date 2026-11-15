@@ -436,6 +436,7 @@ function renderParams(s) {
         ['Harga beli maks.', sn.maxPrice.toFixed(2)],
         ['Untung minimal', (sn.minEv * 100).toFixed(1) + '¢ / kontrak'],
         ['Modal per tembakan', `${money(sn.usd)} – ${money(sn.maxUsd)} (dinamis)`],
+        ['Saat hasil terkunci', `${money(sn.lockedUsd ?? sn.usd)} (jarak aman ≥ ${sn.lockZ ?? '-'}σ)`],
         [
           'Naikkan taruhan',
           sn.trust?.trusted ? 'aktif (sniper terbukti untung)' : `belum: ${sn.trust?.reason ?? '-'}`,

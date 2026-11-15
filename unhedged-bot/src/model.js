@@ -128,7 +128,21 @@ export function brier(prob, outcome) {
  * @param {number} [a.momentumWeight=0]
  * @param {number} [a.sigmaMultiplier=1]
  */
-export function probabilityUpTwap({
+export function probabilityUpTwap(args) {
+  const z = twapZ(args);
+  if (z === null) return null;
+  if (z === Infinity) return 1;
+  if (z === -Infinity) return 0;
+  return normCdf(z);
+}
+
+/**
+ * "Jarak aman" hasil round dalam satuan standar deviasi (z).
+ * z = (perkiraan rata-rata akhir − acuan) / ketidakpastiannya.
+ * z = +5 artinya harga harus bergerak 5 standar deviasi melawan arah dalam sisa detik agar hasil
+ * berbalik menjadi DOWN. +Infinity / −Infinity = hasil sudah pasti (semua detik sudah diketahui).
+ */
+export function twapZ({
   spot,
   threshold,
   secondsLeft,
@@ -152,7 +166,7 @@ export function probabilityUpTwap({
 
   if (m <= 0) {
     const twap = fixedSum / N;
-    return twap >= threshold ? 1 : 0;
+    return twap >= threshold ? Infinity : -Infinity;
   }
   if (!(sigma > 0)) return null;
   const tau0 = Math.max(0, left - N);
@@ -163,5 +177,5 @@ export function probabilityUpTwap({
 
   const mean = (fixedSum + m * futureMean) / N;
   const sd = (m / N) * futureSd;
-  return normCdf((mean - threshold) / sd);
+  return (mean - threshold) / sd;
 }

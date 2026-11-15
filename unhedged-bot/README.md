@@ -30,6 +30,8 @@ Karena itu strategi default sekarang adalah **sniper**:
    untung, dan *akurasi yang terbukti secara statistik* (batas bawah 95% Wilson) di atas titik impas.
    Contoh: 35/35 menang baru membuktikan akurasi ~92.8%, sedangkan beli di 0.90 + fee butuh ~94.5%,
    jadi taruhan masih minimum. Setelah kalah sekali hari itu, taruhan kembali ke minimum sampai besok.
+   **Pengecualian "terkunci":** bila harga harus bergerak ≥ `SNIPE_LOCK_Z` (5) standar deviasi dalam sisa
+   detik agar hasil berbalik, bot langsung menembak dengan `SNIPE_LOCKED_USD` ($6), walau belum terbukti.
    Bot memeriksa harga setiap 1 detik selama jendela tembak.
 7. **Rem harian:** setelah kalah `SNIPE_MAX_LOSSES_PER_DAY` kali (default 2), sniper berhenti sampai
    besok (UTC). Opsional: berhenti setelah untung harian mencapai `DAILY_PROFIT_TARGET_USD`.
@@ -320,6 +322,8 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `SNIPE_MAX_USD` | `10` | Modal maksimum per tembakan saat sangat yakin |
 | `SNIPE_KELLY_FRACTION` | `0.05` | Agresivitas kenaikan taruhan (fraksi saldo × Kelly) |
 | `SNIPE_TRUST_TRADES` | `30` | Minimal trade sniper sebelum taruhan boleh naik |
+| `SNIPE_LOCK_Z` | `5` | Hasil dianggap "terkunci" bila harga harus bergerak ≥ sekian standar deviasi agar berbalik |
+| `SNIPE_LOCKED_USD` | `6` | Taruhan saat hasil terkunci (berlaku walau sniper belum terbukti; setengah jalan di LOCK_Z − 1) |
 | `SNIPE_MAX_LOSSES_PER_DAY` | `2` | Rem: berhenti sampai besok setelah kalah sebanyak ini |
 | `DAILY_PROFIT_TARGET_USD` | `0` | Berhenti setelah untung harian mencapai angka ini (0 = tanpa target) |
 | `FEE_MODEL` | `official` | `official` = rumus resmi Unhedged: harga × (1−harga) × koefisien. `flat`/`risk` = perkiraan lama |

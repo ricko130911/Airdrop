@@ -1,5 +1,5 @@
 import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
-import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, brier } from './model.js';
+import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, twapZ, brier } from './model.js';
 import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan } from './strategy.js';
 import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
 import path from 'node:path';
@@ -304,17 +304,21 @@ export class Bot {
     };
 
     let pUp;
+    let zUp = null;
     let known = null;
     if (avgSec > 0) {
       const endWindowStart = entry.window.endMs - avgSec * 1000;
       if (Date.now() > endWindowStart) known = await this.prices.secondCloses(entry.asset, endWindowStart, entry.window.endMs);
-      pUp = probabilityUpTwap({
+      const twapArgs = {
         ...common,
         threshold: entry.strike.value,
         avgSeconds: avgSec,
         knownSum: known?.sum ?? 0,
         knownCount: known?.count ?? 0,
-      });
+      };
+      pUp = probabilityUpTwap(twapArgs);
+      // Jarak aman tanpa momentum (lebih konservatif) untuk menentukan ukuran taruhan
+      zUp = twapZ({ ...twapArgs, momentumWeight: 0 });
     } else {
       pUp = probabilityUp({ ...common, strike: entry.strike.value });
     }
@@ -322,7 +326,7 @@ export class Bot {
     // Data per detik harus lengkap: detik yang sudah lewat di jendela rata-rata harus sudah ada datanya
     const elapsed = avgSec > 0 ? Math.max(0, Math.floor(avgSec - secondsLeft)) : 0;
     const dataOk = avgSec === 0 || elapsed === 0 || (known?.count ?? 0) >= elapsed - 3;
-    return { pUp, spot: data.spot, sigma, drift, source: data.source, knownAvg, knownCount: known?.count ?? 0, knownSource: known?.source, dataOk, elapsed };
+    return { pUp, zUp, spot: data.spot, sigma, drift, source: data.source, knownAvg, knownCount: known?.count ?? 0, knownSource: known?.source, dataOk, elapsed };
   }
 
   /** Simulasi fill (DRY-RUN): order terisi hanya bila ada ask di order book <= harga order. */
@@ -714,6 +718,8 @@ export class Bot {
     // Taruhan boleh dinaikkan hanya bila sniper sudah terbukti untung & belum kalah hari ini
     const trust = this.learner.sniperTrust(this.cfg.snipeTrustTrades);
     const allowScale = trust.trusted && today.snipeLosses === 0;
+    // Jarak aman untuk sisi yang dipilih (z UP dibalik untuk sisi DOWN)
+    const lockZ = est.zUp === null || est.zUp === undefined ? null : side === 'up' ? est.zUp : -est.zUp;
     const d = decideSnipe({
       prob,
       side,
@@ -723,10 +729,13 @@ export class Bot {
       exposureLeftUsd,
       bankroll: this.bankroll ?? 0,
       allowScale,
+      lockZ,
+      allowBoost: today.snipeLosses === 0,
     });
     let sizeNote = '';
     if (d.action === 'buy') {
-      if (d.sizing.scaled) sizeNote = ` · taruhan dinaikkan ke $${d.stakeUsd.toFixed(2)} (yakin ${(prob * 100).toFixed(1)}%)`;
+      const zTxt = lockZ === null ? '' : lockZ === Infinity ? ', hasil sudah pasti' : `, jarak aman ${lockZ.toFixed(1)}σ`;
+      if (d.sizing.scaled) sizeNote = ` · taruhan ${d.sizing.tier} $${d.stakeUsd.toFixed(2)} (yakin ${(prob * 100).toFixed(2)}%${zTxt})`;
       else if (!trust.trusted) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (belum terbukti: ${trust.reason})`;
       else if (today.snipeLosses) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (sudah kalah hari ini)`;
       else sizeNote = ` · taruhan $${d.stakeUsd.toFixed(2)}`;
@@ -894,6 +903,8 @@ export class Bot {
                 minEv: c.snipeMinEv,
                 usd: c.snipeUsd,
                 maxUsd: c.snipeMaxUsd,
+                lockedUsd: c.snipeLockedUsd,
+                lockZ: c.snipeLockZ,
                 maxLossesPerDay: c.snipeMaxLossesPerDay,
                 dailyTarget: c.dailyProfitTargetUsd,
                 feeModel: c.feeModel,

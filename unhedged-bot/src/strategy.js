@@ -138,7 +138,7 @@ export function feeFor(price, rate, model = 'flat') {
  * @param {object} a.cfg         snipeMinProb, snipeMaxPrice, snipeMinEv, snipeUsd, feeModel
  * @param {number} a.exposureLeftUsd
  */
-export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUsd, bankroll = 0, allowScale = false }) {
+export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUsd, bankroll = 0, allowScale = false, lockZ = null, allowBoost = false }) {
   if (!Number.isFinite(prob)) return { action: 'skip', code: 'no_prob', reason: 'peluang tidak tersedia' };
   if (prob < cfg.snipeMinProb) return { action: 'skip', code: 'unsure', reason: `belum pasti (p=${prob.toFixed(3)} < ${cfg.snipeMinProb})` };
   const ask = book?.[side]?.bestAsk ?? null;
@@ -147,7 +147,7 @@ export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUs
   const fee = feeFor(ask, feeRate, cfg.feeModel);
   const ev = prob - ask - fee; // untung harapan per kontrak (USD)
   if (ev < cfg.snipeMinEv) return { action: 'skip', code: 'thin_ev', reason: `untung tipis (${(ev * 100).toFixed(1)}¢ < ${(cfg.snipeMinEv * 100).toFixed(1)}¢)` };
-  const sizing = snipeStake({ prob, cost: ask + fee, bankroll, cfg, allowScale });
+  const sizing = snipeStake({ prob, cost: ask + fee, bankroll, cfg, allowScale, lockZ, allowBoost });
   const budget = Math.min(sizing.usd, Math.max(0, exposureLeftUsd));
   const quantity = Math.floor(budget / (ask + fee));
   if (quantity < 1) return { action: 'skip', code: 'size', reason: exposureLeftUsd <= 0 ? 'batas exposure tercapai' : 'modal per tembakan terlalu kecil' };
@@ -175,13 +175,29 @@ export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUs
  * lalu dibatasi antara SNIPE_USD (minimum) dan SNIPE_MAX_USD (maksimum).
  * Bila allowScale = false (sniper belum terbukti / baru kalah), selalu pakai minimum.
  */
-export function snipeStake({ prob, cost, bankroll, cfg, allowScale }) {
+export function snipeStake({ prob, cost, bankroll, cfg, allowScale, lockZ = null, allowBoost = false }) {
   const min = cfg.snipeUsd;
   const max = Math.max(min, cfg.snipeMaxUsd ?? min);
-  if (!allowScale || !(cost > 0 && cost < 1) || !(bankroll > 0)) return { usd: min, kelly: null, scaled: false };
+  // Tingkat "terkunci": bila hasil nyaris mustahil berbalik (jarak aman >= SNIPE_LOCK_Z standar deviasi),
+  // taruhan boleh naik ke SNIPE_LOCKED_USD walau sniper belum terbukti. Setengah jalan di (LOCK_Z - 1).
+  const lockedUsd = Math.min(max, Math.max(min, cfg.snipeLockedUsd ?? min));
+  const lockAt = cfg.snipeLockZ ?? 5;
+  let tierUsd = min;
+  let tier = 'minimum';
+  if (allowBoost && lockZ !== null && lockZ >= lockAt) {
+    tierUsd = lockedUsd;
+    tier = 'terkunci';
+  } else if (allowBoost && lockZ !== null && lockZ >= lockAt - 1) {
+    tierUsd = (min + lockedUsd) / 2;
+    tier = 'hampir terkunci';
+  }
+  if (!allowScale || !(cost > 0 && cost < 1) || !(bankroll > 0)) {
+    return { usd: tierUsd, kelly: null, scaled: tierUsd > min + 1e-9, tier };
+  }
   const kelly = Math.max(0, (prob - cost) / (1 - cost));
-  const usd = Math.min(max, Math.max(min, bankroll * (cfg.snipeKellyFraction ?? 0.05) * kelly));
-  return { usd, kelly, scaled: usd > min + 1e-9 };
+  const kellyUsd = Math.min(max, Math.max(min, bankroll * (cfg.snipeKellyFraction ?? 0.05) * kelly));
+  const usd = Math.max(kellyUsd, tierUsd);
+  return { usd, kelly, scaled: usd > min + 1e-9, tier: usd > tierUsd + 1e-9 ? 'terbukti' : tier };
 }
 
 export const SNIPE_REASON_LABEL = {

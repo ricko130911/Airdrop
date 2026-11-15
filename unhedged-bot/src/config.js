@@ -74,6 +74,9 @@ export function loadConfig() {
     snipeMaxUsd: num('SNIPE_MAX_USD', 10),
     snipeKellyFraction: num('SNIPE_KELLY_FRACTION', 0.05),
     snipeTrustTrades: num('SNIPE_TRUST_TRADES', 30),
+    // Taruhan lebih besar saat hasil round "terkunci" (jarak aman >= SNIPE_LOCK_Z standar deviasi)
+    snipeLockZ: num('SNIPE_LOCK_Z', 5),
+    snipeLockedUsd: num('SNIPE_LOCKED_USD', 6),
     snipePollMs: num('SNIPE_POLL_MS', 1000),
     snipeMaxLossesPerDay: num('SNIPE_MAX_LOSSES_PER_DAY', 2),
     dailyProfitTargetUsd: num('DAILY_PROFIT_TARGET_USD', 0),

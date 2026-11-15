@@ -53,3 +53,25 @@ test('Learner.sniperTrust: butuh cukup trade DAN terbukti di atas impas', () => 
   L.addRecords(Array.from({ length: 4 }, () => sniperRecord(false)));
   assert.equal(L.sniperTrust(30).trusted, false);
 });
+
+import { twapZ } from '../src/model.js';
+
+const lockCfg = { ...cfg, snipeLockZ: 5, snipeLockedUsd: 6 };
+
+test('twapZ: makin banyak detik diketahui di atas acuan -> jarak aman makin besar', () => {
+  const base = { spot: 100.01, threshold: 100, sigma: 1e-4, avgSeconds: 60 };
+  const early = twapZ({ ...base, secondsLeft: 40, knownSum: 100.01 * 20, knownCount: 20 });
+  const late = twapZ({ ...base, secondsLeft: 5, knownSum: 100.01 * 55, knownCount: 55 });
+  assert.ok(late > early && early > 0, `${early} ${late}`);
+  assert.equal(twapZ({ ...base, secondsLeft: 0, knownSum: 6000.6, knownCount: 60 }), Infinity);
+});
+
+test('snipeStake: taruhan naik saat hasil terkunci, walau sniper belum terbukti', () => {
+  const s = (lockZ, allowBoost = true) => snipeStake({ prob: 0.999, cost: 0.97, bankroll: 100, cfg: lockCfg, allowScale: false, lockZ, allowBoost });
+  assert.equal(s(3).usd, 3); // belum terkunci -> minimum
+  assert.equal(s(4.5).usd, 4.5); // hampir terkunci -> setengah jalan
+  assert.equal(s(4.5).tier, 'hampir terkunci');
+  assert.equal(s(6).usd, 6); // terkunci -> $6
+  assert.equal(s(Infinity).usd, 6);
+  assert.equal(s(6, false).usd, 3); // sudah kalah hari ini -> tidak ada kenaikan
+});
