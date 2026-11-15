@@ -144,6 +144,8 @@ export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUs
   const ask = book?.[side]?.bestAsk ?? null;
   if (ask === null) return { action: 'skip', code: 'no_ask', reason: `tidak ada penjual ${side.toUpperCase()}` };
   if (ask > cfg.snipeMaxPrice) return { action: 'skip', code: 'too_pricey', reason: `ask ${ask.toFixed(2)} > maks ${cfg.snipeMaxPrice}` };
+  // Hasil hampir pasti tapi dijual jauh lebih murah: hampir selalu data order book basi / anomali
+  if (ask < (cfg.snipeMinPrice ?? 0)) return { action: 'skip', code: 'suspicious', reason: `ask ${ask.toFixed(2)} terlalu murah untuk hasil sepasti ini (data basi?)` };
   const fee = feeFor(ask, feeRate, cfg.feeModel);
   const ev = prob - ask - fee; // untung harapan per kontrak (USD)
   if (ev < cfg.snipeMinEv) return { action: 'skip', code: 'thin_ev', reason: `untung tipis (${(ev * 100).toFixed(1)}¢ < ${(cfg.snipeMinEv * 100).toFixed(1)}¢)` };
@@ -208,6 +210,7 @@ export const SNIPE_REASON_LABEL = {
   thin_ev: 'untung tipis setelah fee',
   size: 'batas modal',
   data: 'data belum lengkap',
+  suspicious: 'harga mencurigakan (data basi?)',
 };
 
 /**

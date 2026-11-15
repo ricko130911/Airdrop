@@ -123,7 +123,7 @@ function analyze(cfg) {
   const sc = L.snipeScanSummary(cfg.snipeMinEv);
   if (sc.rounds) {
     const pc = (a, b) => (b ? ((a / b) * 100).toFixed(1) + '%' : '-');
-    const labels = { no_prob: 'peluang tak tersedia', unsure: 'belum pasti', no_ask: 'tidak ada penjual', too_pricey: 'harga terlalu mahal', thin_ev: 'untung tipis setelah fee', size: 'batas modal', data: 'data belum lengkap' };
+    const labels = { no_prob: 'peluang tak tersedia', unsure: 'belum pasti', no_ask: 'tidak ada penjual', too_pricey: 'harga terlalu mahal', thin_ev: 'untung tipis setelah fee', size: 'batas modal', data: 'data belum lengkap', suspicious: 'harga mencurigakan (data basi?)' };
     console.log('\n== Peluang sniper per round ==');
     console.log(`Round dipantau: ${sc.rounds} | sniper menembak: ${sc.fired} | probe: ${sc.probes}`);
     console.log(`Round dengan penjual di sisi pemenang saat bot yakin: ${sc.eligibleWithSeller} (${pc(sc.eligibleWithSeller, sc.rounds)})`);

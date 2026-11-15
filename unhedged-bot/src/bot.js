@@ -103,29 +103,44 @@ export class Bot {
   // ------------------------------------------------------------------ loop
 
   async tick() {
-    const now = Date.now();
-    if (now - this.lastDiscovery >= this.cfg.discoveryMs) await this.refreshMarkets();
-    if (this.live && now - this.lastRisk >= 30_000) await this.refreshRisk();
+    const { startAt, stopAt } = this.tradeWindow();
+    const leftOf = (e) => (e.window.endMs - Date.now()) / 1000;
+    const byEnd = () => [...this.markets.values()].sort((a, b) => a.window.endMs - b.window.endMs);
+    // Mode cepat (poll ~1 detik) selama ada market di/menjelang jendela tembak sniper
+    this.fastMode = this.cfg.strategy === 'sniper' && byEnd().some((e) => leftOf(e) <= startAt + 3 && leftOf(e) > stopAt - 1);
+
+    // 1) PRIORITAS: market di jendela trading diproses lebih dulu, sebelum pekerjaan lain
+    //    (discovery, harga dashboard, settle) supaya tembakan tidak terlambat.
     if (this.live) await this.syncOrders();
-    if (now - this.lastPriceRefresh >= 10_000) {
+    for (const entry of byEnd()) {
+      const secondsLeft = leftOf(entry);
+      if (secondsLeft <= stopAt || secondsLeft > startAt) continue;
+      if (Date.now() < entry.window.startMs) continue;
+      if (this.foreignMarkets.has(entry.market.id)) continue;
+      try {
+        await this.handleMarket(entry, secondsLeft);
+      } catch (e) {
+        this.log.error(`[${this.label(entry)}] gagal memproses market ${entry.market.id}: ${e.message}`);
+      }
+    }
+
+    // 2) Pekerjaan lain. Discovery & harga dashboard ditunda selama mode cepat.
+    const now = Date.now();
+    if (!this.fastMode && now - this.lastDiscovery >= this.cfg.discoveryMs) await this.refreshMarkets();
+    if (this.live && now - this.lastRisk >= 30_000) await this.refreshRisk();
+    if (!this.fastMode && now - this.lastPriceRefresh >= 10_000) {
       // Segarkan harga semua aset (untuk ticker dashboard), error diabaikan
       this.lastPriceRefresh = now;
       await Promise.all(this.cfg.assets.map((a) => this.prices.series(a).catch(() => null)));
     }
 
-    const { startAt, stopAt } = this.tradeWindow();
-    const entries = [...this.markets.values()].sort((a, b) => a.window.endMs - b.window.endMs);
-    // Mode cepat (poll ~1 detik) selama ada market di jendela tembak sniper
-    this.fastMode =
-      this.cfg.strategy === 'sniper' &&
-      entries.some((e) => {
-        const left = (e.window.endMs - Date.now()) / 1000;
-        return left <= startAt + 3 && left > stopAt - 1;
-      });
-    for (const entry of entries) {
-      const secondsLeft = (entry.window.endMs - Date.now()) / 1000;
+    for (const entry of byEnd()) {
+      const secondsLeft = leftOf(entry);
 
       if (secondsLeft <= -20) {
+        // Coba ambil hasil resmi paling sering sekali per 5 detik per market (hemat request)
+        if (this.fastMode || Date.now() < (entry.nextSettleAt ?? 0)) continue;
+        entry.nextSettleAt = Date.now() + 5000;
         const done = await this.settle(entry);
         if (done) this.markets.delete(entry.market.id);
         continue;
@@ -138,15 +153,6 @@ export class Bot {
           this.log.info(`[${this.label(entry)}] ${entry.lastDecision}`);
         }
         continue;
-      }
-      if (secondsLeft > startAt) continue;
-      if (Date.now() < entry.window.startMs) continue;
-      if (this.foreignMarkets.has(entry.market.id)) continue;
-
-      try {
-        await this.handleMarket(entry, secondsLeft);
-      } catch (e) {
-        this.log.error(`[${this.label(entry)}] gagal memproses market ${entry.market.id}: ${e.message}`);
       }
     }
   }
@@ -335,6 +341,13 @@ export class Bot {
   simulateFill(entry, tag) {
     const o = entry.order;
     if (!o?.dry) return;
+    // Pengaman: order tidak boleh dianggap terisi setelah batas waktu tembak (atau setelah market tutup)
+    const leftNow = (entry.window.endMs - Date.now()) / 1000;
+    if (leftNow <= this.tradeWindow().stopAt) {
+      this.log.warn(`[DRY] ${tag} terlambat (sisa ${leftNow.toFixed(1)}s), order dianggap TIDAK terisi`);
+      entry.order = null;
+      return;
+    }
     const ask = entry.book?.[o.side]?.bestAsk ?? null;
     if (ask === null || ask > o.price) return;
     const fill = Math.min(ask, o.price);
@@ -760,6 +773,12 @@ export class Bot {
     if (d.action !== 'buy') {
       this.log.debug(`${tag} ${info} -> sniper skip: ${d.reason}`);
       await this.maybeProbe(entry, secondsLeft, { prob, side, ask }, tag, info, d.reason);
+      return;
+    }
+    const leftNow = (entry.window.endMs - Date.now()) / 1000;
+    if (leftNow <= this.cfg.snipeMinSec) {
+      entry.lastDecision = `sniper: terlambat (sisa ${leftNow.toFixed(1)}s), tidak menembak`;
+      this.log.warn(`${tag} ${entry.lastDecision}`);
       return;
     }
     entry.scan.fired = true;

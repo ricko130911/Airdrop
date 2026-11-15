@@ -61,6 +61,8 @@ export function tradesFromRecords(records) {
   for (const r of settleRecords(records)) {
     const p = r.paper;
     if (!p || !(p.quantity > 0) || !(p.price > 0)) continue;
+    // Trade yang "terisi" saat/ setelah market tutup tidak mungkin terjadi: abaikan
+    if (Number.isFinite(p.fill?.secondsLeft) && p.fill.secondsLeft < 1) continue;
     const won = (p.side === 'up' ? 1 : 0) === r.outcomeUp;
     const cost = p.quantity * p.price + (p.fee ?? 0);
     const pnl = (won ? p.quantity : 0) - cost;
@@ -101,7 +103,9 @@ export function summarize(trades) {
     qty += t.quantity;
     px += t.price;
   }
-  return { n, wins, winrate: wins / n, breakeven: cost / qty, pnl, cost, roi: cost > 0 ? pnl / cost : null, avgPrice: px / n };
+  // breakevenAvg: rata-rata titik impas per trade (tidak terdistorsi satu trade besar/murah)
+  const breakevenAvg = trades.reduce((a, t) => a + t.cost / t.quantity, 0) / n;
+  return { n, wins, winrate: wins / n, breakeven: cost / qty, breakevenAvg, pnl, cost, roi: cost > 0 ? pnl / cost : null, avgPrice: px / n };
 }
 
 export function groupSummary(trades, keyFn, keys) {
@@ -247,8 +251,8 @@ export class Learner {
     let reason = null;
     if (st.n < minTrades) reason = `baru ${st.n}/${minTrades} trade`;
     else if (!(st.pnl > 0)) reason = 'total sniper masih rugi';
-    else if (lower < st.breakeven) reason = `akurasi terbukti ${(lower * 100).toFixed(1)}% < impas ${(st.breakeven * 100).toFixed(1)}%`;
-    return { trusted: reason === null, reason, n: st.n, need: minTrades, winrate: st.winrate, provenWinrate: lower, breakeven: st.breakeven, pnl: st.pnl };
+    else if (lower < st.breakevenAvg) reason = `akurasi terbukti ${(lower * 100).toFixed(1)}% < impas ${(st.breakevenAvg * 100).toFixed(1)}%`;
+    return { trusted: reason === null, reason, n: st.n, need: minTrades, winrate: st.winrate, provenWinrate: lower, breakeven: st.breakevenAvg, pnl: st.pnl };
   }
 
   /**
