@@ -42,9 +42,9 @@ Karena itu strategi default sekarang adalah **sniper**:
    nyata di harga pasar. Probe dicatat terpisah (`probe`) dan tidak memengaruhi rem maupun kenaikan
    taruhan sniper. Default hanya aktif di mode simulasi; atur dengan `SNIPE_PROBE_EVERY_ROUND`.
 
-> **Fee adalah penentu utama.** Di detik akhir, sisi pemenang biasanya dihargai 0.97–0.99. Dengan
-> asumsi fee flat (5% × harga), membeli di 0.98 rugi walaupun menang; dengan fee "risk"
-> (5% × min(harga, 1−harga)) masih untung ~2 sen. Pastikan fee asli Unhedged sebelum memakai uang asli.
+> **Fee resmi Unhedged:** `kontrak × harga × (1 − harga) × koefisien` (taker tier 0 = 0.05). Fee
+> memuncak di harga 0.50 dan nyaris nol di harga tinggi: beli di 0.98 hanya ~0.1 sen per kontrak.
+> Bot memakai rumus ini secara default (`FEE_MODEL=official`).
 
 > **Risiko yang harus dipahami:** sniper membeli di harga tinggi (misalnya 0.90). Satu kemenangan
 > hanya untung sekitar $0.15–0.30, sedangkan satu kekalahan bisa rugi sekitar $2.80. Sniper hanya
@@ -314,7 +314,7 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `STRATEGY` | `sniper` | `sniper` = tembak di akhir round, `model` = strategi lama |
 | `SNIPE_MAX_SEC` / `SNIPE_MIN_SEC` | `45` / `4` | Jendela tembak (detik tersisa) |
 | `SNIPE_MIN_PROB` | `0.97` | Peluang menang minimal |
-| `SNIPE_MAX_PRICE` | `0.95` | Harga beli maksimum |
+| `SNIPE_MAX_PRICE` | `0.97` | Harga beli maksimum |
 | `SNIPE_MIN_EV` | `0.015` | Untung minimal per kontrak setelah fee |
 | `SNIPE_USD` | `3` | Modal minimum per tembakan |
 | `SNIPE_MAX_USD` | `10` | Modal maksimum per tembakan saat sangat yakin |
@@ -322,7 +322,7 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `SNIPE_TRUST_TRADES` | `30` | Minimal trade sniper sebelum taruhan boleh naik |
 | `SNIPE_MAX_LOSSES_PER_DAY` | `2` | Rem: berhenti sampai besok setelah kalah sebanyak ini |
 | `DAILY_PROFIT_TARGET_USD` | `0` | Berhenti setelah untung harian mencapai angka ini (0 = tanpa target) |
-| `FEE_MODEL` | `flat` | `flat` = tarif × harga (konservatif), `risk` = tarif × min(harga, 1−harga) |
+| `FEE_MODEL` | `official` | `official` = rumus resmi Unhedged: harga × (1−harga) × koefisien. `flat`/`risk` = perkiraan lama |
 | `ADAPTIVE` | `true` | Kalibrasi peluang otomatis + blokir zona yang terbukti rugi |
 | `ADAPTIVE_MIN_TRADES` | `25` | Minimal trade per zona sebelum zona boleh diblokir |
 | `CALIBRATION_MIN_SAMPLES` | `40` | Minimal market per titik waktu sebelum kalibrasi aktif |

@@ -440,12 +440,12 @@ function renderParams(s) {
           'Naikkan taruhan',
           sn.trust?.trusted ? 'aktif (sniper terbukti untung)' : `belum: ${sn.trust?.reason ?? '-'}`,
         ],
-        ['Model fee', sn.feeModel === 'risk' ? 'risk-shaped' : 'flat (konservatif)'],
+        ['Model fee', sn.feeModel === 'official' ? 'resmi Unhedged' : sn.feeModel === 'risk' ? 'risk-shaped' : 'flat (konservatif)'],
         ['Probe tiap round', sn.probeEveryRound ? 'aktif (1 kontrak)' : 'mati'],
         [
           'Peluang terdeteksi',
           sn.scan && sn.scan.rounds
-            ? `${sn.scan.evFlat} (fee flat) / ${sn.scan.evRisk} (fee risk) dari ${sn.scan.rounds} round`
+            ? `${sn.scan.evFlat} (fee flat) / ${sn.scan.evRisk} (fee resmi) dari ${sn.scan.rounds} round`
             : 'menunggu data round',
         ],
         ['Rem harian', `${t ? t.snipeLosses : 0} / ${sn.maxLossesPerDay} kalah`],

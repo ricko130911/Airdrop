@@ -120,6 +120,8 @@ export function decideParimutuel({ pUp, pools, feeRate = 0, cfg, bankroll, expos
  */
 export function feeFor(price, rate, model = 'flat') {
   if (!(rate > 0)) return 0;
+  // 'official' = rumus resmi Unhedged: harga x (1 - harga) x koefisien (per kontrak)
+  if (model === 'official') return rate * price * (1 - price);
   return model === 'risk' ? rate * Math.min(price, 1 - price) : rate * price;
 }
 
@@ -205,7 +207,7 @@ export function updateSnipeScan(scan, { prob, side, ask, feeRate = 0, secondsLef
   if (Number.isFinite(prob) && ask !== null && ask !== undefined) {
     const sec = Math.round(secondsLeft);
     const evFlat = prob - ask - feeFor(ask, feeRate, 'flat');
-    const evRisk = prob - ask - feeFor(ask, feeRate, 'risk');
+    const evRisk = prob - ask - feeFor(ask, feeRate, 'official'); // bestRisk = dengan fee resmi
     if (!s.bestFlat || evFlat > s.bestFlat.ev) s.bestFlat = { ev: evFlat, ask, prob, side, sec };
     if (!s.bestRisk || evRisk > s.bestRisk.ev) s.bestRisk = { ev: evRisk, ask, prob, side, sec };
   }
@@ -220,7 +222,7 @@ export function describeSnipeScan(scan) {
   const parts = [`p maks ${scan.maxProb !== null ? (scan.maxProb * 100).toFixed(1) + '%' : '-'}`];
   if (scan.bestFlat) {
     parts.push(`ask terbaik ${scan.bestFlat.ask.toFixed(2)} (${scan.bestFlat.side.toUpperCase()}, sisa ${scan.bestFlat.sec}s)`);
-    parts.push(`untung terbaik ${cents(scan.bestFlat.ev)} fee flat / ${cents(scan.bestRisk.ev)} fee risk`);
+    parts.push(`untung terbaik ${cents(scan.bestFlat.ev)} fee flat / ${cents(scan.bestRisk.ev)} fee resmi`);
   } else {
     parts.push('tidak pernah ada penjual');
   }

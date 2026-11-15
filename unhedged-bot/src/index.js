@@ -126,7 +126,7 @@ function analyze(cfg) {
     const labels = { no_prob: 'peluang tak tersedia', unsure: 'belum pasti', no_ask: 'tidak ada penjual', too_pricey: 'harga terlalu mahal', thin_ev: 'untung tipis setelah fee', size: 'batas modal', data: 'data belum lengkap' };
     console.log('\n== Peluang sniper per round ==');
     console.log(`Round dipantau: ${sc.rounds} | sniper menembak: ${sc.fired} | probe: ${sc.probes}`);
-    console.log(`Round dengan untung >= ${(cfg.snipeMinEv * 100).toFixed(1)}¢/kontrak: fee flat ${sc.evFlat} (${pc(sc.evFlat, sc.rounds)}) | fee risk ${sc.evRisk} (${pc(sc.evRisk, sc.rounds)})`);
+    console.log(`Round dengan untung >= ${(cfg.snipeMinEv * 100).toFixed(1)}¢/kontrak: fee flat ${sc.evFlat} (${pc(sc.evFlat, sc.rounds)}) | fee resmi ${sc.evRisk} (${pc(sc.evRisk, sc.rounds)})`);
     console.log(`Sisi pilihan model di momen terbaik benar: ${sc.bestSideRight}/${sc.bestSideKnown} (${pc(sc.bestSideRight, sc.bestSideKnown)})`);
     const reasons = Object.entries(sc.reasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${labels[k] ?? k} ${n}x`);
     if (reasons.length) console.log(`Alasan tidak menembak (per detik): ${reasons.join(', ')}`);

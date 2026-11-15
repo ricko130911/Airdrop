@@ -38,3 +38,11 @@ test('decideSnipe: fee model risk membuat tembakan di harga tinggi masuk akal', 
   const d = decideSnipe({ prob: 0.99, side: 'up', book: book(0.93, null), feeRate: 0.05, cfg: { ...cfg, feeModel: 'risk' }, exposureLeftUsd: 20 });
   assert.equal(d.action, 'buy'); // 0.99 - 0.93 - 0.0035 = 0.0565
 });
+
+test('feeFor official: cocok dengan tabel resmi Unhedged (100 kontrak, tier 0)', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.ok(near(feeFor(0.25, 0.05, 'official') * 100, 0.9375)); // taker @0.25
+  assert.ok(near(feeFor(0.5, 0.02, 'official') * 100, 0.5)); // maker @0.50
+  assert.ok(near(feeFor(0.75, 0.05, 'official') * 100, 0.9375)); // taker @0.75
+  assert.ok(feeFor(0.98, 0.05, 'official') < 0.001); // nyaris nol di harga tinggi
+});
