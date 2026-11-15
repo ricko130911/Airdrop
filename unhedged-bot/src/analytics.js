@@ -256,13 +256,16 @@ export class Learner {
    */
   snipeScanSummary(minEv = 0.015) {
     const scans = this.records.filter((r) => r.scan);
-    const out = { rounds: scans.length, fired: 0, probes: 0, evFlat: 0, evRisk: 0, bestSideRight: 0, bestSideKnown: 0, reasons: {} };
+    const out = { rounds: scans.length, fired: 0, probes: 0, evFlat: 0, evRisk: 0, eligible: 0, eligibleWithSeller: 0, bestSideRight: 0, bestSideKnown: 0, reasons: {} };
     for (const r of scans) {
       const s = r.scan;
       if (s.fired) out.fired++;
       if (s.probe) out.probes++;
       if (s.bestFlat && s.bestFlat.ev >= minEv) out.evFlat++;
       if (s.bestRisk && s.bestRisk.ev >= minEv) out.evRisk++;
+      // Peluang sniper yang sesungguhnya: yakin (>= minimal), ada penjual, dan untung >= minimal
+      if (s.bestEligible) out.eligibleWithSeller++;
+      if (s.bestEligible && s.bestEligible.ev >= minEv) out.eligible++;
       if (s.bestRisk) {
         out.bestSideKnown++;
         if ((s.bestRisk.side === 'up' ? 1 : 0) === r.outcomeUp) out.bestSideRight++;

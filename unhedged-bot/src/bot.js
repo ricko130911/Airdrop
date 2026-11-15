@@ -731,7 +731,7 @@ export class Bot {
       else if (today.snipeLosses) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (sudah kalah hari ini)`;
       else sizeNote = ` · taruhan $${d.stakeUsd.toFixed(2)}`;
     }
-    entry.scan = updateSnipeScan(entry.scan, { prob, side, ask, feeRate: entry.feeRate ?? 0, secondsLeft, code: d.action === 'buy' ? null : d.code });
+    entry.scan = updateSnipeScan(entry.scan, { prob, side, ask, feeRate: entry.feeRate ?? 0, secondsLeft, code: d.action === 'buy' ? null : d.code, minProb: this.cfg.snipeMinProb });
     entry.lastDecision =
       d.action === 'buy' ? `TEMBAK ${side.toUpperCase()} @ ${d.price.toFixed(2)} · untung ~${(d.ev * 100).toFixed(1)}¢/kontrak${sizeNote}` : `sniper: ${d.reason}`;
     if (d.action !== 'buy') {

@@ -15,6 +15,14 @@ test('updateSnipeScan: simpan peluang & untung terbaik dengan dua asumsi fee', (
   assert.equal(s.reasons.too_pricey, 2);
   assert.equal(s.reasons.data, 1);
   assert.match(describeSnipeScan(s), /tidak menembak \(paling sering: harga terlalu mahal\)/);
+  assert.equal(s.bestEligible.ask, 0.97); // momen yakin terbaik
+});
+
+test('updateSnipeScan: momen murah tapi belum yakin TIDAK dihitung sebagai peluang sniper', () => {
+  const s = updateSnipeScan(null, { prob: 0.52, side: 'down', ask: 0.43, feeRate: 0.05, secondsLeft: 21, code: 'unsure', minProb: 0.97 });
+  assert.ok(s.bestRisk.ev > 0.05); // di atas kertas untung...
+  assert.equal(s.bestEligible, null); // ...tapi bukan peluang sniper
+  assert.match(describeSnipeScan(s), /saat yakin: tidak ada penjual/);
 });
 
 function rec(strategy, won) {

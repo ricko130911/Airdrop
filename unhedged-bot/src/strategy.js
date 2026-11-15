@@ -199,8 +199,8 @@ export const SNIPE_REASON_LABEL = {
  * menurut DUA asumsi fee (flat = tarif x harga, risk = tarif x min(harga, 1-harga)).
  * Dipakai untuk menjawab: "apakah peluang untung memang ada di market ini?"
  */
-export function updateSnipeScan(scan, { prob, side, ask, feeRate = 0, secondsLeft, code }) {
-  const s = scan ?? { ticks: 0, maxProb: null, bestFlat: null, bestRisk: null, reasons: {}, fired: false, probe: false };
+export function updateSnipeScan(scan, { prob, side, ask, feeRate = 0, secondsLeft, code, minProb = 0.97 }) {
+  const s = scan ?? { ticks: 0, maxProb: null, bestFlat: null, bestRisk: null, bestEligible: null, eligibleAsks: 0, reasons: {}, fired: false, probe: false };
   s.ticks++;
   if (code) s.reasons[code] = (s.reasons[code] ?? 0) + 1;
   if (Number.isFinite(prob) && (s.maxProb === null || prob > s.maxProb)) s.maxProb = prob;
@@ -210,6 +210,11 @@ export function updateSnipeScan(scan, { prob, side, ask, feeRate = 0, secondsLef
     const evRisk = prob - ask - feeFor(ask, feeRate, 'official'); // bestRisk = dengan fee resmi
     if (!s.bestFlat || evFlat > s.bestFlat.ev) s.bestFlat = { ev: evFlat, ask, prob, side, sec };
     if (!s.bestRisk || evRisk > s.bestRisk.ev) s.bestRisk = { ev: evRisk, ask, prob, side, sec };
+    // Momen yang memenuhi syarat sniper: peluang >= minimal DAN ada penjual
+    if (prob >= minProb) {
+      s.eligibleAsks = (s.eligibleAsks ?? 0) + 1;
+      if (!s.bestEligible || evRisk > s.bestEligible.ev) s.bestEligible = { ev: evRisk, ask, prob, side, sec };
+    }
   }
   return s;
 }
@@ -220,9 +225,11 @@ export function describeSnipeScan(scan) {
   const cents = (x) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}¢`;
   const top = Object.entries(scan.reasons).sort((a, b) => b[1] - a[1])[0];
   const parts = [`p maks ${scan.maxProb !== null ? (scan.maxProb * 100).toFixed(1) + '%' : '-'}`];
-  if (scan.bestFlat) {
-    parts.push(`ask terbaik ${scan.bestFlat.ask.toFixed(2)} (${scan.bestFlat.side.toUpperCase()}, sisa ${scan.bestFlat.sec}s)`);
-    parts.push(`untung terbaik ${cents(scan.bestFlat.ev)} fee flat / ${cents(scan.bestRisk.ev)} fee resmi`);
+  if (scan.bestEligible) {
+    const b = scan.bestEligible;
+    parts.push(`saat yakin: ask terbaik ${b.ask.toFixed(2)} (${b.side.toUpperCase()}, sisa ${b.sec}s, p ${(b.prob * 100).toFixed(1)}%) → untung ${cents(b.ev)}`);
+  } else if (scan.bestFlat) {
+    parts.push('saat yakin: tidak ada penjual di sisi pemenang');
   } else {
     parts.push('tidak pernah ada penjual');
   }

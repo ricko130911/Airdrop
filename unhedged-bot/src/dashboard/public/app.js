@@ -445,7 +445,7 @@ function renderParams(s) {
         [
           'Peluang terdeteksi',
           sn.scan && sn.scan.rounds
-            ? `${sn.scan.evFlat} (fee flat) / ${sn.scan.evRisk} (fee resmi) dari ${sn.scan.rounds} round`
+            ? `${sn.scan.eligible} peluang dari ${sn.scan.rounds} round (${sn.scan.eligibleWithSeller} ada penjual saat yakin)`
             : 'menunggu data round',
         ],
         ['Rem harian', `${t ? t.snipeLosses : 0} / ${sn.maxLossesPerDay} kalah`],
