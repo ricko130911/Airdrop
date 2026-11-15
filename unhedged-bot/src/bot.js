@@ -135,7 +135,7 @@ export class Bot {
         if (entry.scan && !entry.scanDone) {
           entry.scanDone = true;
           entry.lastDecision = describeSnipeScan(entry.scan);
-          this.log.info(`[${entry.asset}] ${entry.lastDecision}`);
+          this.log.info(`[${this.label(entry)}] ${entry.lastDecision}`);
         }
         continue;
       }
@@ -146,7 +146,7 @@ export class Bot {
       try {
         await this.handleMarket(entry, secondsLeft);
       } catch (e) {
-        this.log.error(`[${entry.asset}] gagal memproses market ${entry.market.id}: ${e.message}`);
+        this.log.error(`[${this.label(entry)}] gagal memproses market ${entry.market.id}: ${e.message}`);
       }
     }
   }
@@ -238,12 +238,12 @@ export class Bot {
     for (const entry of tracked) {
       const o = byId.get(entry.order.id);
       if (!o) {
-        this.log.info(`[${entry.asset}] order #${entry.order.id} sudah tidak terbuka (terisi). Posisi ditahan sampai market selesai.`);
+        this.log.info(`[${this.label(entry)}] order #${entry.order.id} sudah tidak terbuka (terisi). Posisi ditahan sampai market selesai.`);
         if (entry.paper && !entry.paper.fill) entry.paper.fill = this.fillInfo(entry, entry.paper.side, entry.paper.price);
         entry.order = null;
         entry.hasPosition = true;
       } else if (Number(o.cum_quantity ?? 0) > 0 && !entry.hasPosition) {
-        this.log.info(`[${entry.asset}] order #${entry.order.id} terisi sebagian (${o.cum_quantity}/${o.quantity}).`);
+        this.log.info(`[${this.label(entry)}] order #${entry.order.id} terisi sebagian (${o.cum_quantity}/${o.quantity}).`);
         if (entry.paper && !entry.paper.fill) entry.paper.fill = this.fillInfo(entry, entry.paper.side, entry.paper.price);
         entry.hasPosition = true;
       }
@@ -270,7 +270,7 @@ export class Bot {
       const mk = res?.market ?? res;
       if (mk && mk.id === entry.market.id) entry.market = { ...entry.market, ...mk };
     } catch (e) {
-      this.log.debug(`[${entry.asset}] gagal ambil detail market: ${e.message}`);
+      this.log.debug(`[${this.label(entry)}] gagal ambil detail market: ${e.message}`);
     }
     entry.book = bookTop(entry.market, entry.sides);
     entry.feeRate = this.cfg.feeRate ?? marketTakerFee(entry.market);
@@ -353,7 +353,7 @@ export class Bot {
     const m0 = entry.market;
     await this.refreshMarketDetail(entry);
     const m = entry.market ?? m0;
-    const tag = `[${entry.asset}${entry.durationSec && entry.durationSec !== 300 ? ' ' + durationLabel(entry.durationSec) : ''} ${Math.round(secondsLeft)}s]`;
+    const tag = `[${this.label(entry)} ${Math.round(secondsLeft)}s]`;
 
     // Arbitrase complete set (UP + DOWN < $1 setelah fee)
     const arb = completeSetArb(entry.book, entry.feeRate);
@@ -555,7 +555,7 @@ export class Bot {
 
   async cancelOrder(entry, reason) {
     if (!entry.order) return;
-    const tag = `[${entry.asset}]`;
+    const tag = `[${this.label(entry)}]`;
     if (!this.live || entry.order.dry) {
       this.log.info(`[DRY] ${tag} batalkan order ${entry.order.side.toUpperCase()} @ ${entry.order.price.toFixed(2)} (${reason})`);
       entry.order = null; // order simulasi yang dibatalkan = tidak pernah terisi
@@ -658,11 +658,16 @@ export class Bot {
       ? ` | posisi ${trade.side.toUpperCase()} ${trade.won ? 'MENANG' : 'KALAH'} ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl.toFixed(2)}${trade.probe ? ' (probe)' : ''}`
       : '';
     this.log.info(
-      `[${entry.asset}] selesai: ${outcomeUp ? 'UP' : 'DOWN'} (sumber ${source}), prediksi terakhir pUp=${fmt(entry.lastEval.pUp)}${tradeNote}` +
+      `[${this.label(entry)}] selesai: ${outcomeUp ? 'UP' : 'DOWN'} (sumber ${source}), prediksi terakhir pUp=${fmt(entry.lastEval.pUp)}${tradeNote}` +
         ` | akurasi ${s.correct}/${s.scored}, Brier ${fmt(s.brierSum / s.scored)}` +
         ` | PnL ${this.live ? '' : 'simulasi '}$${s.paperPnl.toFixed(2)} (${s.wins}/${s.trades} menang)`,
     );
     return true;
+  }
+
+  /** Label market untuk log: aset + durasi bila bukan 5 menit, mis. "BTC 15 mnt". */
+  label(entry) {
+    return `${entry.asset}${entry.durationSec && entry.durationSec !== 300 ? ' ' + durationLabel(entry.durationSec) : ''}`;
   }
 
   /** Jendela trading efektif (detik tersisa) sesuai strategi. */
