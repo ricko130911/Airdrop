@@ -223,7 +223,7 @@ export class Learner {
   zoneVerdict(asset, secondsLeft) {
     if (!this.enabled) return { blocked: false };
     const tk = timeBucket(secondsLeft);
-    const modelTrades = this.trades.filter((t) => t.strategy !== 'sniper');
+    const modelTrades = this.trades.filter((t) => !String(t.strategy).startsWith('sniper'));
     const byTime = zoneEval(modelTrades.filter((t) => t.secondsLeft !== null && timeBucket(t.secondsLeft) === tk), this.minZone);
     const byAsset = zoneEval(modelTrades.filter((t) => t.asset === asset), this.minZone);
     if (byTime.blocked) {
@@ -250,12 +250,34 @@ export class Learner {
     return { trusted: reason === null, reason, n: st.n, need: minTrades, winrate: st.winrate, provenWinrate: lower, breakeven: st.breakeven, pnl: st.pnl };
   }
 
+  /**
+   * Seberapa sering peluang sniper benar-benar ada? Dihitung dari catatan scan per round.
+   * @param {number} minEv untung minimal per kontrak
+   */
+  snipeScanSummary(minEv = 0.015) {
+    const scans = this.records.filter((r) => r.scan);
+    const out = { rounds: scans.length, fired: 0, probes: 0, evFlat: 0, evRisk: 0, bestSideRight: 0, bestSideKnown: 0, reasons: {} };
+    for (const r of scans) {
+      const s = r.scan;
+      if (s.fired) out.fired++;
+      if (s.probe) out.probes++;
+      if (s.bestFlat && s.bestFlat.ev >= minEv) out.evFlat++;
+      if (s.bestRisk && s.bestRisk.ev >= minEv) out.evRisk++;
+      if (s.bestRisk) {
+        out.bestSideKnown++;
+        if ((s.bestRisk.side === 'up' ? 1 : 0) === r.outcomeUp) out.bestSideRight++;
+      }
+      for (const [k, n] of Object.entries(s.reasons ?? {})) out.reasons[k] = (out.reasons[k] ?? 0) + n;
+    }
+    return out;
+  }
+
   /** Laporan untuk dashboard / CLI. */
   report() {
     const trades = this.trades;
     const withZone = (groups, keyFn) =>
       groups.map((g) => {
-        const z = zoneEval(trades.filter((t) => t.strategy !== 'sniper' && keyFn(t) === g.key), this.minZone);
+        const z = zoneEval(trades.filter((t) => !String(t.strategy).startsWith('sniper') && keyFn(t) === g.key), this.minZone);
         return { ...g, recentMeanRet: z.meanRet, recentN: z.n, tStat: z.t, blocked: this.enabled && z.blocked };
       });
     const timeKey = (t) => (t.secondsLeft === null ? null : timeBucket(t.secondsLeft));

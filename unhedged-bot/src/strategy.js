@@ -137,18 +137,18 @@ export function feeFor(price, rate, model = 'flat') {
  * @param {number} a.exposureLeftUsd
  */
 export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUsd, bankroll = 0, allowScale = false }) {
-  if (!Number.isFinite(prob)) return { action: 'skip', reason: 'peluang tidak tersedia' };
-  if (prob < cfg.snipeMinProb) return { action: 'skip', reason: `belum pasti (p=${prob.toFixed(3)} < ${cfg.snipeMinProb})` };
+  if (!Number.isFinite(prob)) return { action: 'skip', code: 'no_prob', reason: 'peluang tidak tersedia' };
+  if (prob < cfg.snipeMinProb) return { action: 'skip', code: 'unsure', reason: `belum pasti (p=${prob.toFixed(3)} < ${cfg.snipeMinProb})` };
   const ask = book?.[side]?.bestAsk ?? null;
-  if (ask === null) return { action: 'skip', reason: `tidak ada penjual ${side.toUpperCase()}` };
-  if (ask > cfg.snipeMaxPrice) return { action: 'skip', reason: `ask ${ask.toFixed(2)} > maks ${cfg.snipeMaxPrice}` };
+  if (ask === null) return { action: 'skip', code: 'no_ask', reason: `tidak ada penjual ${side.toUpperCase()}` };
+  if (ask > cfg.snipeMaxPrice) return { action: 'skip', code: 'too_pricey', reason: `ask ${ask.toFixed(2)} > maks ${cfg.snipeMaxPrice}` };
   const fee = feeFor(ask, feeRate, cfg.feeModel);
   const ev = prob - ask - fee; // untung harapan per kontrak (USD)
-  if (ev < cfg.snipeMinEv) return { action: 'skip', reason: `untung tipis (${(ev * 100).toFixed(1)}¢ < ${(cfg.snipeMinEv * 100).toFixed(1)}¢)` };
+  if (ev < cfg.snipeMinEv) return { action: 'skip', code: 'thin_ev', reason: `untung tipis (${(ev * 100).toFixed(1)}¢ < ${(cfg.snipeMinEv * 100).toFixed(1)}¢)` };
   const sizing = snipeStake({ prob, cost: ask + fee, bankroll, cfg, allowScale });
   const budget = Math.min(sizing.usd, Math.max(0, exposureLeftUsd));
   const quantity = Math.floor(budget / (ask + fee));
-  if (quantity < 1) return { action: 'skip', reason: exposureLeftUsd <= 0 ? 'batas exposure tercapai' : 'modal per tembakan terlalu kecil' };
+  if (quantity < 1) return { action: 'skip', code: 'size', reason: exposureLeftUsd <= 0 ? 'batas exposure tercapai' : 'modal per tembakan terlalu kecil' };
   return {
     action: 'buy',
     strategy: 'sniper',
@@ -180,4 +180,50 @@ export function snipeStake({ prob, cost, bankroll, cfg, allowScale }) {
   const kelly = Math.max(0, (prob - cost) / (1 - cost));
   const usd = Math.min(max, Math.max(min, bankroll * (cfg.snipeKellyFraction ?? 0.05) * kelly));
   return { usd, kelly, scaled: usd > min + 1e-9 };
+}
+
+export const SNIPE_REASON_LABEL = {
+  no_prob: 'peluang tak tersedia',
+  unsure: 'belum pasti',
+  no_ask: 'tidak ada penjual',
+  too_pricey: 'harga terlalu mahal',
+  thin_ev: 'untung tipis setelah fee',
+  size: 'batas modal',
+  data: 'data belum lengkap',
+};
+
+/**
+ * Catat peluang sniper sepanjang satu round: peluang tertinggi, ask terbaik, dan untung terbaik
+ * menurut DUA asumsi fee (flat = tarif x harga, risk = tarif x min(harga, 1-harga)).
+ * Dipakai untuk menjawab: "apakah peluang untung memang ada di market ini?"
+ */
+export function updateSnipeScan(scan, { prob, side, ask, feeRate = 0, secondsLeft, code }) {
+  const s = scan ?? { ticks: 0, maxProb: null, bestFlat: null, bestRisk: null, reasons: {}, fired: false, probe: false };
+  s.ticks++;
+  if (code) s.reasons[code] = (s.reasons[code] ?? 0) + 1;
+  if (Number.isFinite(prob) && (s.maxProb === null || prob > s.maxProb)) s.maxProb = prob;
+  if (Number.isFinite(prob) && ask !== null && ask !== undefined) {
+    const sec = Math.round(secondsLeft);
+    const evFlat = prob - ask - feeFor(ask, feeRate, 'flat');
+    const evRisk = prob - ask - feeFor(ask, feeRate, 'risk');
+    if (!s.bestFlat || evFlat > s.bestFlat.ev) s.bestFlat = { ev: evFlat, ask, prob, side, sec };
+    if (!s.bestRisk || evRisk > s.bestRisk.ev) s.bestRisk = { ev: evRisk, ask, prob, side, sec };
+  }
+  return s;
+}
+
+/** Ringkasan satu round sniper dalam satu kalimat. */
+export function describeSnipeScan(scan) {
+  if (!scan) return 'sniper: tidak ada data round ini';
+  const cents = (x) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}¢`;
+  const top = Object.entries(scan.reasons).sort((a, b) => b[1] - a[1])[0];
+  const parts = [`p maks ${scan.maxProb !== null ? (scan.maxProb * 100).toFixed(1) + '%' : '-'}`];
+  if (scan.bestFlat) {
+    parts.push(`ask terbaik ${scan.bestFlat.ask.toFixed(2)} (${scan.bestFlat.side.toUpperCase()}, sisa ${scan.bestFlat.sec}s)`);
+    parts.push(`untung terbaik ${cents(scan.bestFlat.ev)} fee flat / ${cents(scan.bestRisk.ev)} fee risk`);
+  } else {
+    parts.push('tidak pernah ada penjual');
+  }
+  const status = scan.fired ? 'MENEMBAK' : scan.probe ? 'probe 1 kontrak' : `tidak menembak${top ? ` (paling sering: ${SNIPE_REASON_LABEL[top[0]] ?? top[0]})` : ''}`;
+  return `round selesai: ${status} · ${parts.join(' · ')}`;
 }

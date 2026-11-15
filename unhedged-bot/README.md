@@ -34,6 +34,18 @@ Karena itu strategi default sekarang adalah **sniper**:
 7. **Rem harian:** setelah kalah `SNIPE_MAX_LOSSES_PER_DAY` kali (default 2), sniper berhenti sampai
    besok (UTC). Opsional: berhenti setelah untung harian mencapai `DAILY_PROFIT_TARGET_USD`.
 
+8. **Laporan setiap round:** saat jendela tembak selesai, bot mencatat peluang tertinggi, ask terbaik,
+   untung terbaik (dengan fee flat dan fee risk), dan alasan paling sering tidak menembak. Ringkasannya
+   ada di `node src/index.js analyze` bagian **Peluang sniper per round**.
+9. **Selalu aktif (probe):** bila sniper tidak menembak, bot mengirim order percobaan **1 kontrak** di
+   `SNIPE_PROBE_AT_SEC` detik terakhir (peluang ≥ 90%, harga ≤ 0.99). Tujuannya mengumpulkan data hasil
+   nyata di harga pasar. Probe dicatat terpisah (`probe`) dan tidak memengaruhi rem maupun kenaikan
+   taruhan sniper. Default hanya aktif di mode simulasi; atur dengan `SNIPE_PROBE_EVERY_ROUND`.
+
+> **Fee adalah penentu utama.** Di detik akhir, sisi pemenang biasanya dihargai 0.97–0.99. Dengan
+> asumsi fee flat (5% × harga), membeli di 0.98 rugi walaupun menang; dengan fee "risk"
+> (5% × min(harga, 1−harga)) masih untung ~2 sen. Pastikan fee asli Unhedged sebelum memakai uang asli.
+
 > **Risiko yang harus dipahami:** sniper membeli di harga tinggi (misalnya 0.90). Satu kemenangan
 > hanya untung sekitar $0.15–0.30, sedangkan satu kekalahan bisa rugi sekitar $2.80. Sniper hanya
 > menguntungkan bila akurasinya sangat tinggi (di atas sekitar 95%). Uji di simulasi dulu, lalu lihat

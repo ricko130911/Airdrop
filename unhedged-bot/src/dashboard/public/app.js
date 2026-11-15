@@ -441,6 +441,13 @@ function renderParams(s) {
           sn.trust?.trusted ? 'aktif (sniper terbukti untung)' : `belum: ${sn.trust?.reason ?? '-'}`,
         ],
         ['Model fee', sn.feeModel === 'risk' ? 'risk-shaped' : 'flat (konservatif)'],
+        ['Probe tiap round', sn.probeEveryRound ? 'aktif (1 kontrak)' : 'mati'],
+        [
+          'Peluang terdeteksi',
+          sn.scan && sn.scan.rounds
+            ? `${sn.scan.evFlat} (fee flat) / ${sn.scan.evRisk} (fee risk) dari ${sn.scan.rounds} round`
+            : 'menunggu data round',
+        ],
         ['Rem harian', `${t ? t.snipeLosses : 0} / ${sn.maxLossesPerDay} kalah`],
         ['Target harian', sn.dailyTarget > 0 ? money(sn.dailyTarget) : 'tidak ada'],
         ['Hari ini', t ? `${t.trades} trade · ${money(t.pnl, { sign: true })}` : '—'],

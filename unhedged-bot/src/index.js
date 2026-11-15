@@ -120,9 +120,20 @@ function analyze(cfg) {
     console.log('\nBelum ada data versi baru. Biarkan bot berjalan dulu.');
     return;
   }
+  const sc = L.snipeScanSummary(cfg.snipeMinEv);
+  if (sc.rounds) {
+    const pc = (a, b) => (b ? ((a / b) * 100).toFixed(1) + '%' : '-');
+    const labels = { no_prob: 'peluang tak tersedia', unsure: 'belum pasti', no_ask: 'tidak ada penjual', too_pricey: 'harga terlalu mahal', thin_ev: 'untung tipis setelah fee', size: 'batas modal', data: 'data belum lengkap' };
+    console.log('\n== Peluang sniper per round ==');
+    console.log(`Round dipantau: ${sc.rounds} | sniper menembak: ${sc.fired} | probe: ${sc.probes}`);
+    console.log(`Round dengan untung >= ${(cfg.snipeMinEv * 100).toFixed(1)}¢/kontrak: fee flat ${sc.evFlat} (${pc(sc.evFlat, sc.rounds)}) | fee risk ${sc.evRisk} (${pc(sc.evRisk, sc.rounds)})`);
+    console.log(`Sisi pilihan model di momen terbaik benar: ${sc.bestSideRight}/${sc.bestSideKnown} (${pc(sc.bestSideRight, sc.bestSideKnown)})`);
+    const reasons = Object.entries(sc.reasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${labels[k] ?? k} ${n}x`);
+    if (reasons.length) console.log(`Alasan tidak menembak (per detik): ${reasons.join(', ')}`);
+  }
   console.log('\n== Menurut strategi ==');
   console.log(head);
-  for (const g of r.byStrategy) console.log(row(g, g.key === 'sniper' ? 'sniper' : 'model'));
+  for (const g of r.byStrategy) console.log(row(g, g.key === 'sniper-probe' ? 'probe' : g.key));
   console.log('\n== Menurut sisa waktu saat order terisi ==');
   console.log(head);
   for (const g of r.byTime) console.log(row(g));

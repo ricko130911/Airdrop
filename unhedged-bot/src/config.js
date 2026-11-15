@@ -77,6 +77,12 @@ export function loadConfig() {
     snipePollMs: num('SNIPE_POLL_MS', 1000),
     snipeMaxLossesPerDay: num('SNIPE_MAX_LOSSES_PER_DAY', 2),
     dailyProfitTargetUsd: num('DAILY_PROFIT_TARGET_USD', 0),
+    // Selalu aktif: bila sniper tidak menembak, kirim order percobaan 1 kontrak di detik akhir.
+    // Default hanya aktif di mode simulasi (DRY_RUN) karena tujuannya mengumpulkan data.
+    snipeProbeEveryRound: bool('SNIPE_PROBE_EVERY_ROUND', bool('DRY_RUN', true)),
+    snipeProbeAtSec: num('SNIPE_PROBE_AT_SEC', 12),
+    snipeProbeMinProb: num('SNIPE_PROBE_MIN_PROB', 0.9),
+    snipeProbeMaxPrice: num('SNIPE_PROBE_MAX_PRICE', 0.99),
 
     // Pembelajaran dari hasil sendiri
     adaptive: bool('ADAPTIVE', true),

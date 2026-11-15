@@ -1,6 +1,6 @@
 import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, brier } from './model.js';
-import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor } from './strategy.js';
+import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan } from './strategy.js';
 import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
 import path from 'node:path';
 
@@ -131,6 +131,11 @@ export class Bot {
       }
       if (secondsLeft <= stopAt) {
         if (entry.order) await this.cancelOrder(entry, 'mendekati penutupan');
+        if (entry.scan && !entry.scanDone) {
+          entry.scanDone = true;
+          entry.lastDecision = describeSnipeScan(entry.scan);
+          this.log.info(`[${entry.asset}] ${entry.lastDecision}`);
+        }
         continue;
       }
       if (secondsLeft > startAt) continue;
@@ -635,6 +640,7 @@ export class Bot {
       strike: entry.strike,
       lastEval: entry.lastEval,
       checkpoints: entry.checkpoints ?? [],
+      scan: entry.scan ?? null,
       paper,
     };
     this.log.journal(record);
@@ -695,14 +701,16 @@ export class Bot {
       entry.lastDecision = `target harian tercapai (+$${today.pnl.toFixed(2)})`;
       return;
     }
-    if (!est.dataOk) {
-      entry.lastDecision = `data per detik belum lengkap (${est.knownCount}/${est.elapsed} dtk)`;
-      return;
-    }
     // Pakai peluang yang paling konservatif antara model mentah & terkalibrasi
     const side = est.pUp >= 0.5 ? 'up' : 'down';
     const sideProb = (p) => (side === 'up' ? p : 1 - p);
     const prob = Math.min(sideProb(est.pUp), sideProb(pUpRaw));
+    const ask = entry.book?.[side]?.bestAsk ?? null;
+    if (!est.dataOk) {
+      entry.scan = updateSnipeScan(entry.scan, { prob: null, side, ask, feeRate: entry.feeRate ?? 0, secondsLeft, code: 'data' });
+      entry.lastDecision = `data per detik belum lengkap (${est.knownCount}/${est.elapsed} dtk)`;
+      return;
+    }
     // Taruhan boleh dinaikkan hanya bila sniper sudah terbukti untung & belum kalah hari ini
     const trust = this.learner.sniperTrust(this.cfg.snipeTrustTrades);
     const allowScale = trust.trusted && today.snipeLosses === 0;
@@ -723,13 +731,34 @@ export class Bot {
       else if (today.snipeLosses) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (sudah kalah hari ini)`;
       else sizeNote = ` · taruhan $${d.stakeUsd.toFixed(2)}`;
     }
+    entry.scan = updateSnipeScan(entry.scan, { prob, side, ask, feeRate: entry.feeRate ?? 0, secondsLeft, code: d.action === 'buy' ? null : d.code });
     entry.lastDecision =
       d.action === 'buy' ? `TEMBAK ${side.toUpperCase()} @ ${d.price.toFixed(2)} · untung ~${(d.ev * 100).toFixed(1)}¢/kontrak${sizeNote}` : `sniper: ${d.reason}`;
     if (d.action !== 'buy') {
       this.log.debug(`${tag} ${info} -> sniper skip: ${d.reason}`);
+      await this.maybeProbe(entry, secondsLeft, { prob, side, ask }, tag, info, d.reason);
       return;
     }
+    entry.scan.fired = true;
     await this.placeOrder(entry, d, `${tag} [SNIPER${d.sizing.scaled ? ' +' : ''}]`, info + sizeNote);
+    this.simulateFill(entry, tag);
+  }
+
+  /**
+   * Mode "selalu aktif": bila sniper belum menembak sampai detik-detik terakhir, kirim order
+   * percobaan 1 kontrak pada sisi yang diunggulkan. Tujuannya mengumpulkan data hasil nyata
+   * di harga pasar (dicatat sebagai strategi 'sniper-probe', tidak memengaruhi rem & kepercayaan sniper).
+   */
+  async maybeProbe(entry, secondsLeft, { prob, side, ask }, tag, info, why) {
+    const c = this.cfg;
+    if (!c.snipeProbeEveryRound || entry.scan?.fired || entry.scan?.probe) return;
+    if (secondsLeft > c.snipeProbeAtSec) return;
+    if (!(prob >= c.snipeProbeMinProb) || ask === null || ask > c.snipeProbeMaxPrice) return;
+    const fee = feeFor(ask, entry.feeRate ?? 0, c.feeModel);
+    const d = { action: 'buy', strategy: 'sniper-probe', side, prob, price: ask, ask, quantity: 1, stakeUsd: ask, ev: prob - ask - fee, fillsNow: true, probe: true };
+    entry.scan.probe = true;
+    entry.lastDecision = `probe 1 kontrak ${side.toUpperCase()} @ ${ask.toFixed(2)} (sniper tidak menembak: ${why})`;
+    await this.placeOrder(entry, d, `${tag} [PROBE]`, info);
     this.simulateFill(entry, tag);
   }
 
@@ -869,6 +898,8 @@ export class Bot {
                 dailyTarget: c.dailyProfitTargetUsd,
                 feeModel: c.feeModel,
                 trust: this.learner.sniperTrust(c.snipeTrustTrades),
+                probeEveryRound: c.snipeProbeEveryRound,
+                scan: this.learner.snipeScanSummary(c.snipeMinEv),
               }
             : null,
         assets: c.assets,
