@@ -47,12 +47,17 @@ export class Bot {
     const file = path.join(this.cfg.logDir ?? 'logs', 'decisions.jsonl');
     try {
       const records = settleRecords(loadRecords(file));
+      // Pembelajaran (kalibrasi model, peluang) memakai SEMUA riwayat, termasuk simulasi
       this.learner.addRecords(records);
-      for (const r of records) this.applySettleRecord(r);
+      // Statistik, riwayat dashboard, dan rem harian HANYA dari mode yang sama:
+      // mode live tidak tercampur hasil simulasi, dan sebaliknya.
+      const sameMode = records.filter((r) => (this.live ? r.live === true : r.live !== true));
+      for (const r of sameMode) this.applySettleRecord(r);
       if (records.length) {
         const rep = this.learner.report();
+        const pnl = sameMode.reduce((a, r) => a + (tradesFromRecords([r])[0]?.pnl ?? 0), 0);
         this.log.info(
-          `Riwayat dimuat: ${records.length} market, ${rep.total.n} trade, PnL $${rep.total.pnl.toFixed(2)}` +
+          `Riwayat dimuat: ${records.length} market untuk pembelajaran | statistik ${this.live ? 'LIVE' : 'simulasi'}: ${sameMode.length} market, PnL $${pnl.toFixed(2)}` +
             ` | kalibrasi aktif: ${rep.calibration.filter((c) => c.active).map((c) => `${c.checkpoint}s(k=${c.k.toFixed(2)})`).join(', ') || 'belum (data kurang)'}`,
         );
       }
@@ -653,6 +658,7 @@ export class Bot {
     const record = {
       kind: 'settle',
       v: RECORD_VERSION,
+      live: this.live,
       ts: new Date().toISOString(),
       marketId: entry.market.id,
       asset: entry.asset,
