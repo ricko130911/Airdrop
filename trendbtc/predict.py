@@ -104,9 +104,24 @@ def estimate_vol_drift(closes_1s, momentum_weight: float = 0.25, momentum_window
     sigma = max(sigma, 1e-6)
     recent = r[-momentum_window:]
     mu = momentum_weight * (sum(recent) / len(recent))
-    # drift tidak boleh lebih dari 0.5 sigma per detik
-    mu = max(-0.5 * sigma, min(0.5 * sigma, mu))
     return sigma, mu
+
+
+def estimate_vol_1m(closes_1m):
+    """Volatilitas per detik dari candle 1 menit (lebih stabil untuk ronde 5m/15m/1h)."""
+    r = log_returns(closes_1m)
+    if len(r) < 10:
+        raise ValueError("Data 1 menit terlalu sedikit")
+    mean = sum(r) / len(r)
+    var = sum((x - mean) ** 2 for x in r) / (len(r) - 1)
+    return max(math.sqrt(var / 60.0), 1e-6)
+
+
+def drift_term(mu: float, sigma: float, seconds_left: float, cap: float = 0.25) -> float:
+    """Total drift sampai akhir ronde, dibatasi maksimal `cap` x deviasi standar sisa ronde.
+    Tanpa batas ini, momentum 60 detik yang diproyeksikan ke ronde 1 jam jadi terlalu yakin."""
+    s = sigma * math.sqrt(seconds_left)
+    return max(-cap * s, min(cap * s, mu * seconds_left))
 
 
 def prob_up(price: float, start: float, sigma: float, mu: float, seconds_left: float) -> float:
@@ -114,7 +129,7 @@ def prob_up(price: float, start: float, sigma: float, mu: float, seconds_left: f
     if seconds_left <= 0:
         return 1.0 if price > start else 0.0
     s = sigma * math.sqrt(seconds_left)
-    z = (math.log(price / start) + mu * seconds_left) / s
+    z = (math.log(price / start) + drift_term(mu, sigma, seconds_left)) / s
     return norm_cdf(z)
 
 
@@ -123,8 +138,9 @@ def prob_inside_close(price, lower, upper, sigma, mu, seconds_left) -> float:
     if seconds_left <= 0:
         return 1.0 if lower <= price <= upper else 0.0
     s = sigma * math.sqrt(seconds_left)
-    hi = (math.log(upper / price) - mu * seconds_left) / s
-    lo = (math.log(lower / price) - mu * seconds_left) / s
+    d = drift_term(mu, sigma, seconds_left)
+    hi = (math.log(upper / price) - d) / s
+    lo = (math.log(lower / price) - d) / s
     return max(0.0, norm_cdf(hi) - norm_cdf(lo))
 
 
