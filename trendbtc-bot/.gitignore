@@ -1,0 +1,9 @@
+# Rahasia - JANGAN di-commit
+config_multi.json
+config_multi.json.tmp
+.env
+
+venv/
+__pycache__/
+*.pyc
+*.log

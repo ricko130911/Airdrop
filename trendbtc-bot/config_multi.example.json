@@ -1,0 +1,624 @@
+{
+    "API_URL": "https://api.trendbtc.app/api/markets/current-rounds",
+    "API_BASE_URL": "https://api.trendbtc.app",
+    "BALANCE_API_URL": "https://api.trendbtc.app/api/me/balances",
+    "PREDICTION_API_URL": "https://api.trendbtc.app/api/predictions",
+    "PREDICTION_HISTORY_API_URL": "https://api.trendbtc.app/api/predictions/my",
+    "TWO_CAPTCHA_API_KEY": "ISI_API_KEY_2CAPTCHA",
+    "CF_TURNSTILE_SITEKEY": "0x4AAAAAAD0DDclVFAzTAxsS",
+    "SUPPORTED_ASSETS": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "DOGE",
+        "TRUMP",
+        "XRP",
+        "BNB",
+        "HYPE",
+        "AAVE",
+        "ENA",
+        "ZEC",
+        "SUI"
+    ],
+    "ASSET_TIMEFRAMES": {
+        "BTC": [
+            "1m",
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "ETH": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "SOL": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "DOGE": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "TRUMP": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "XRP": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "BNB": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "HYPE": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "AAVE": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "ENA": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "ZEC": [
+            "5m",
+            "15m",
+            "1h"
+        ],
+        "SUI": [
+            "5m",
+            "15m",
+            "1h"
+        ]
+    },
+    "BTC_BAND_SETTINGS": {
+        "AUTO_DETECT": true,
+        "DEFAULT_OFFSET": 20.0
+    },
+    "MIN_BET": 10,
+    "SIMULATION_MODE": false,
+    "ACCOUNTS": [
+        {
+            "ACCOUNT_NAME": "Akun_1",
+            "EMAIL": "email_akun1@example.com",
+            "PASSWORD": "ISI_PASSWORD",
+            "ACCESS_TOKEN": "",
+            "REFRESH_TOKEN": "",
+            "EXECUTE_BEFORE_SECONDS": {
+                "BTC": {
+                    "1m": 10,
+                    "5m": 72,
+                    "15m": 135,
+                    "1h": 260
+                },
+                "ETH": {
+                    "5m": 78,
+                    "15m": 142,
+                    "1h": 275
+                },
+                "SOL": {
+                    "5m": 84,
+                    "15m": 150,
+                    "1h": 290
+                },
+                "DOGE": {
+                    "5m": 90,
+                    "15m": 158,
+                    "1h": 305
+                },
+                "TRUMP": {
+                    "5m": 96,
+                    "15m": 166,
+                    "1h": 320
+                },
+                "XRP": {
+                    "5m": 66,
+                    "15m": 128,
+                    "1h": 245
+                },
+                "BNB": {
+                    "5m": 63,
+                    "15m": 122,
+                    "1h": 230
+                },
+                "HYPE": {
+                    "5m": 102,
+                    "15m": 174,
+                    "1h": 335
+                },
+                "AAVE": {
+                    "5m": 108,
+                    "15m": 182,
+                    "1h": 350
+                },
+                "ENA": {
+                    "5m": 114,
+                    "15m": 190,
+                    "1h": 365
+                },
+                "ZEC": {
+                    "5m": 120,
+                    "15m": 198,
+                    "1h": 380
+                },
+                "SUI": {
+                    "5m": 87,
+                    "15m": 146,
+                    "1h": 280
+                }
+            },
+            "MIN_BET": 10,
+            "BTC_MARTINGALE": {
+                "ENABLED": true,
+                "BASE_BET": 1,
+                "MULTIPLIER": 2,
+                "MAX_BET": 1000
+            },
+            "BTC_1M_BREAKOUT_STAKING": {
+                "ENABLED": true,
+                "RULES": [
+                    {
+                        "gap": 100.0,
+                        "amount": 100
+                    },
+                    {
+                        "gap": 70.0,
+                        "amount": 70
+                    },
+                    {
+                        "gap": 50.0,
+                        "amount": 50
+                    }
+                ]
+            },
+            "ASSET_STAKING_RULES": {
+                "BTC": [
+                    {
+                        "gap": 100.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 70.0,
+                        "amount": 70
+                    },
+                    {
+                        "gap": 50.0,
+                        "amount": 50
+                    }
+                ],
+                "ETH": [
+                    {
+                        "gap": 5.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 2.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 10
+                    }
+                ],
+                "SOL": [
+                    {
+                        "gap": 1.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.1,
+                        "amount": 10
+                    }
+                ],
+                "DOGE": [
+                    {
+                        "gap": 0.001,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.0005,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.0001,
+                        "amount": 10
+                    }
+                ],
+                "TRUMP": [
+                    {
+                        "gap": 0.05,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.02,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.005,
+                        "amount": 10
+                    }
+                ],
+                "XRP": [
+                    {
+                        "gap": 0.01,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.005,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.001,
+                        "amount": 10
+                    }
+                ],
+                "BNB": [
+                    {
+                        "gap": 1.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.1,
+                        "amount": 10
+                    }
+                ],
+                "HYPE": [
+                    {
+                        "gap": 0.5,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.2,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.05,
+                        "amount": 10
+                    }
+                ],
+                "AAVE": [
+                    {
+                        "gap": 0.5,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.2,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.05,
+                        "amount": 10
+                    }
+                ],
+                "ENA": [
+                    {
+                        "gap": 0.005,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.002,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.0005,
+                        "amount": 10
+                    }
+                ],
+                "ZEC": [
+                    {
+                        "gap": 5.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 2.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 10
+                    }
+                ],
+                "SUI": [
+                    {
+                        "gap": 0.05,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.02,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.005,
+                        "amount": 10
+                    }
+                ]
+            },
+            "PROXY": ""
+        },
+        {
+            "ACCOUNT_NAME": "Akun_2",
+            "EMAIL": "email_akun2@example.com",
+            "PASSWORD": "ISI_PASSWORD",
+            "ACCESS_TOKEN": "",
+            "REFRESH_TOKEN": "",
+            "EXECUTE_BEFORE_SECONDS": {
+                "BTC": {
+                    "1m": 18,
+                    "5m": 132,
+                    "15m": 225,
+                    "1h": 430
+                },
+                "ETH": {
+                    "5m": 138,
+                    "15m": 235,
+                    "1h": 445
+                },
+                "SOL": {
+                    "5m": 144,
+                    "15m": 245,
+                    "1h": 460
+                },
+                "DOGE": {
+                    "5m": 150,
+                    "15m": 255,
+                    "1h": 475
+                },
+                "TRUMP": {
+                    "5m": 156,
+                    "15m": 265,
+                    "1h": 490
+                },
+                "XRP": {
+                    "5m": 126,
+                    "15m": 215,
+                    "1h": 415
+                },
+                "BNB": {
+                    "5m": 120,
+                    "15m": 205,
+                    "1h": 400
+                },
+                "HYPE": {
+                    "5m": 162,
+                    "15m": 275,
+                    "1h": 505
+                },
+                "AAVE": {
+                    "5m": 168,
+                    "15m": 285,
+                    "1h": 520
+                },
+                "ENA": {
+                    "5m": 174,
+                    "15m": 295,
+                    "1h": 535
+                },
+                "ZEC": {
+                    "5m": 180,
+                    "15m": 305,
+                    "1h": 550
+                },
+                "SUI": {
+                    "5m": 147,
+                    "15m": 240,
+                    "1h": 450
+                }
+            },
+            "MIN_BET": 10,
+            "BTC_MARTINGALE": {
+                "ENABLED": true,
+                "BASE_BET": 1,
+                "MULTIPLIER": 2,
+                "MAX_BET": 1000
+            },
+            "BTC_1M_BREAKOUT_STAKING": {
+                "ENABLED": true,
+                "RULES": [
+                    {
+                        "gap": 100.0,
+                        "amount": 100
+                    },
+                    {
+                        "gap": 70.0,
+                        "amount": 70
+                    },
+                    {
+                        "gap": 50.0,
+                        "amount": 50
+                    }
+                ]
+            },
+            "ASSET_STAKING_RULES": {
+                "BTC": [
+                    {
+                        "gap": 100.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 70.0,
+                        "amount": 70
+                    },
+                    {
+                        "gap": 50.0,
+                        "amount": 50
+                    }
+                ],
+                "ETH": [
+                    {
+                        "gap": 5.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 2.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 10
+                    }
+                ],
+                "SOL": [
+                    {
+                        "gap": 1.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.1,
+                        "amount": 10
+                    }
+                ],
+                "DOGE": [
+                    {
+                        "gap": 0.001,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.0005,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.0001,
+                        "amount": 10
+                    }
+                ],
+                "TRUMP": [
+                    {
+                        "gap": 0.05,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.02,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.005,
+                        "amount": 10
+                    }
+                ],
+                "XRP": [
+                    {
+                        "gap": 0.01,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.005,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.001,
+                        "amount": 10
+                    }
+                ],
+                "BNB": [
+                    {
+                        "gap": 1.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.1,
+                        "amount": 10
+                    }
+                ],
+                "HYPE": [
+                    {
+                        "gap": 0.5,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.2,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.05,
+                        "amount": 10
+                    }
+                ],
+                "AAVE": [
+                    {
+                        "gap": 0.5,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.2,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.05,
+                        "amount": 10
+                    }
+                ],
+                "ENA": [
+                    {
+                        "gap": 0.005,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.002,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.0005,
+                        "amount": 10
+                    }
+                ],
+                "ZEC": [
+                    {
+                        "gap": 5.0,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 2.5,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.5,
+                        "amount": 10
+                    }
+                ],
+                "SUI": [
+                    {
+                        "gap": 0.05,
+                        "amount": 1000
+                    },
+                    {
+                        "gap": 0.02,
+                        "amount": 50
+                    },
+                    {
+                        "gap": 0.005,
+                        "amount": 10
+                    }
+                ]
+            },
+            "PROXY": ""
+        }
+    ]
+}

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TrendBTC // Neon Sniper Control</title>
+  <meta name="theme-color" content="#05010f" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/vendor/three/build/three.module.js",
+      "three/addons/": "/vendor/three/addons/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene3d" aria-hidden="true"></canvas>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <span class="brand-mark">₿</span>
+      <div>
+        <div class="brand-title">TRENDBTC <span class="accent">// NEON SNIPER</span></div>
+        <div class="brand-sub">Multi-Account Automation Control Deck</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="#overview">Overview</a>
+      <a href="#markets">Markets</a>
+      <a href="#sniper">Sniper</a>
+      <a href="#survivor" data-mode="survivor">Survivor</a>
+      <a href="#bullseye" data-mode="bullseye">Bullseye</a>
+      <a href="#sports" data-mode="sports">Sports</a>
+      <a href="#logs">Logs</a>
+    </nav>
+    <div class="top-status">
+      <span id="pill-conn" class="pill pill-wait">CONNECTING</span>
+      <span id="pill-phase" class="pill">BOOT</span>
+      <span id="pill-sim" class="pill pill-warn hidden">SIMULATION</span>
+      <button id="btn-pause" class="btn-neon" type="button">PAUSE BETS</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- HERO -->
+    <section id="overview" class="hero">
+      <div class="hero-left">
+        <div class="eyebrow">BTC / USD · LIVE FEED</div>
+        <div id="hero-price" class="hero-price">$—</div>
+        <div id="hero-diff" class="hero-diff">vs 1M start —</div>
+        <div class="hero-meta">
+          <div class="meta-box"><span>MODE</span><b id="hero-modes">—</b></div>
+          <div class="meta-box"><span>UPTIME</span><b id="hero-uptime">—</b></div>
+          <div class="meta-box"><span>CLOCK</span><b id="hero-clock">—</b></div>
+        </div>
+        <div class="band-card glass" id="band-card">
+          <div class="band-head"><span>BTC 1M BREAKOUT CORRIDOR</span><b id="band-status">—</b></div>
+          <div class="band-track">
+            <div class="band-zone"></div>
+            <div class="band-marker" id="band-marker"></div>
+          </div>
+          <div class="band-labels">
+            <span id="band-low">LOW —</span>
+            <span id="band-start">START —</span>
+            <span id="band-top">TOP —</span>
+          </div>
+        </div>
+      </div>
+      <div class="hero-right" aria-hidden="true"></div>
+    </section>
+
+    <!-- ACCOUNTS -->
+    <section class="section">
+      <h2 class="section-title"><span>01</span> Accounts</h2>
+      <div id="accounts" class="accounts-grid"></div>
+    </section>
+
+    <!-- MARKETS -->
+    <section id="markets" class="section">
+      <h2 class="section-title"><span>02</span> Live Markets <small>12 assets · 10-min sparkline</small></h2>
+      <div id="asset-grid" class="asset-grid"></div>
+    </section>
+
+    <!-- SNIPER TABLE -->
+    <section id="sniper" class="section" data-mode="crypto">
+      <h2 class="section-title"><span>03</span> Sniper Matrix <small>per round · per account</small></h2>
+      <div class="glass table-wrap">
+        <table class="neon-table" id="sniper-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SURVIVOR -->
+    <section id="survivor" class="section" data-mode="survivor">
+      <h2 class="section-title"><span>04</span> Daily Survivor <small>BTC 5M · R1–R8 elimination</small></h2>
+      <div class="split">
+        <div class="glass panel" id="survivor-global"></div>
+        <div class="glass panel" id="survivor-accounts"></div>
+      </div>
+    </section>
+
+    <!-- BULLSEYE -->
+    <section id="bullseye" class="section" data-mode="bullseye">
+      <h2 class="section-title"><span>05</span> Bullseye <small>call the price · flash event</small></h2>
+      <div class="split">
+        <div class="glass panel" id="bullseye-global"></div>
+        <div class="glass panel" id="bullseye-accounts"></div>
+      </div>
+    </section>
+
+    <!-- SPORTS -->
+    <section id="sports" class="section" data-mode="sports">
+      <h2 class="section-title"><span>06</span> Sports Underdog <small>$1 auto-pick lowest pool</small></h2>
+      <div id="sports-fixtures" class="fixtures-grid"></div>
+      <div class="glass table-wrap" style="margin-top:18px">
+        <table class="neon-table" id="sports-preds">
+          <thead><tr><th>Akun</th><th>Market</th><th>Opsi</th><th>Bet</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- LOGS -->
+    <section id="logs" class="section">
+      <h2 class="section-title"><span>07</span> Execution Logs</h2>
+      <div class="glass table-wrap" data-mode="crypto">
+        <div class="panel-title">Riwayat Prediksi Website (terbaru)</div>
+        <table class="neon-table" id="pred-table">
+          <thead><tr><th>Akun</th><th>Ronde</th><th>Arah</th><th>Bet</th><th>Payout</th><th>Hasil</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="terminals">
+        <div class="terminal glass" data-mode="crypto"><div class="term-head"><i></i><i></i><i></i>crypto.log</div><pre id="log-crypto"></pre></div>
+        <div class="terminal glass" data-mode="survivor"><div class="term-head"><i></i><i></i><i></i>survivor.log</div><pre id="log-survivor"></pre></div>
+        <div class="terminal glass" data-mode="bullseye"><div class="term-head"><i></i><i></i><i></i>bullseye.log</div><pre id="log-bullseye"></pre></div>
+        <div class="terminal glass" data-mode="sports"><div class="term-head"><i></i><i></i><i></i>sports.log</div><pre id="log-sports"></pre></div>
+      </div>
+    </section>
+
+    <footer class="footer">TRENDBTC NEON SNIPER · auto-refresh 1s · <span id="foot-time">—</span></footer>
+  </main>
+
+  <div id="spark-tip" class="spark-tip hidden"></div>
+
+  <script type="module" src="/scene.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
