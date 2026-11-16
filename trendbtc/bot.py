@@ -158,6 +158,16 @@ class Client:
         d = self.request("GET", "/api/markets/my-active-predictions", auth=True) or {}
         return {p.get("roundId") or (p.get("round") or {}).get("id") for p in d.get("predictions") or []}
 
+    def me(self):
+        return self.request("GET", "/api/me", auth=True)
+
+    def balances(self):
+        return self.request("GET", "/api/me/balances", auth=True)
+
+    def my_predictions(self, limit=50):
+        d = self.request("GET", f"/api/predictions/my?limit={int(limit)}", auth=True) or {}
+        return d.get("predictions") or d.get("items") or []
+
     def place(self, round_id, direction, stake):
         body = {"roundId": round_id, "direction": direction, "stakeAmount": stake,
                 "idempotencyKey": str(uuid.uuid4())}
@@ -258,6 +268,37 @@ def log_row(path, row):
         w.writerow(row)
 
 
+def assess(r, client, vol, rules, stake, threshold, min_edge, lock_margin, now, prices):
+    """Nilai satu ronde. Return dict (dipakai CLI dan dashboard). `prices` = cache harga per market."""
+    sym, dur = r.get("marketSymbol", "?"), int(r.get("durationSeconds") or 0)
+    row = {"id": r.get("id"), "market": sym, "duration": dur, "status": r.get("status"),
+           "corridor": r.get("corridorHalfWidth"), "startPrice": None, "price": None, "lockIn": None,
+           "endIn": None, "probs": {}, "best": None, "p": None, "ev": None, "payout": None, "mult": None,
+           "upPool": r.get("upPool") or 0, "downPool": r.get("downPool") or 0, "eligible": False, "note": ""}
+    if r.get("status") != "open" or r.get("startPrice") in (None, ""):
+        row["note"] = f"status={r.get('status')} (lewati)"
+        return row
+    row["startPrice"] = float(r["startPrice"])
+    row["lockIn"] = (ts_ms(r["lockTime"]) - now) / 1000
+    row["endIn"] = (ts_ms(r["endTime"]) - now) / 1000
+    if row["lockIn"] <= lock_margin:
+        row["note"] = "terkunci/hampir terkunci"
+        return row
+    try:
+        if sym not in prices:
+            prices[sym] = client.price(sym)
+        sigma, mu = vol.get(sym, row["endIn"])
+    except Exception as e:  # noqa: BLE001
+        row["note"] = f"data harga gagal: {e}"
+        return row
+    row["price"] = prices[sym]
+    res = evaluate(r, row["price"], sigma, mu, rules, stake, now)
+    d, p, pay, ev, mult = res[0]
+    row.update(probs={x[0]: x[1] for x in res}, best=d, p=p, ev=ev, payout=pay, mult=mult,
+               eligible=p >= threshold and ev >= min_edge * stake)
+    return row
+
+
 def run(a, client=None, vol=None, now_fn=None, sleep_fn=time.sleep):
     tokens = TokenStore(a.token_file) if a.live else None
     if a.live and not tokens.available:
@@ -300,33 +341,18 @@ def run(a, client=None, vol=None, now_fn=None, sleep_fn=time.sleep):
             sym, dur = r.get("marketSymbol", "?"), int(r.get("durationSeconds") or 0)
             if dur not in durations or (markets and sym.upper() not in markets):
                 continue
+            row = assess(r, client, vol, rules, a.stake, a.threshold, a.min_edge, a.lock_margin, now, prices)
             tag = f"{sym:9} {fmt_dur(dur):>3}"
-            if r.get("status") != "open" or r.get("startPrice") in (None, ""):
-                lines.append(f"{tag} status={r.get('status')} (lewati)")
+            if row["best"] is None:
+                lines.append(f"{tag} {row['note']}")
                 continue
-            to_lock = (ts_ms(r["lockTime"]) - now) / 1000
-            to_end = (ts_ms(r["endTime"]) - now) / 1000
-            if to_lock <= a.lock_margin:
-                lines.append(f"{tag} terkunci/hampir terkunci")
-                continue
-            try:
-                if sym not in prices:
-                    prices[sym] = client.price(sym)
-                sigma, mu = vol.get(sym, to_end)
-            except Exception as e:  # noqa: BLE001
-                lines.append(f"{tag} data harga gagal: {e}")
-                continue
-            price = prices[sym]
-            res = evaluate(r, price, sigma, mu, rules, a.stake, now)
-            d, p, pay, ev, mult = res[0]
-            probs = "  ".join(f"{x[0]} {x[1]:5.1%}" for x in sorted(res))
-            ok = p >= a.threshold and ev >= a.min_edge * a.stake
+            d, p = row["best"], row["p"]
             action = "-"
             if r["id"] in done:
                 action = "sudah bet"
-            elif ok and (spent + a.stake > a.budget or bets >= a.max_bets):
+            elif row["eligible"] and (spent + a.stake > a.budget or bets >= a.max_bets):
                 action = "limit budget/jumlah"
-            elif ok:
+            elif row["eligible"]:
                 mode = "LIVE" if a.live else "DRY"
                 result = "dry-run"
                 if a.live:
@@ -341,9 +367,12 @@ def run(a, client=None, vol=None, now_fn=None, sleep_fn=time.sleep):
                     bets += 1
                 action = f"BET {d} ${a.stake} ({result})"
                 log_row(a.log, [datetime.now(timezone.utc).isoformat(timespec="seconds"), r["id"], sym,
-                                fmt_dur(dur), d, f"{p:.4f}", a.stake, pay, f"{ev:.4f}", mult, mode, result])
-            lines.append(f"{tag} harga {price:<12g} start {float(r['startPrice']):<12g} lock {to_lock:5.0f}s "
-                         f"akhir {to_end:5.0f}s | {probs} | terbaik {d} EV ${ev:+.3f} x{mult:.2f} | {action}")
+                                fmt_dur(dur), d, f"{p:.4f}", a.stake, row["payout"], f"{row['ev']:.4f}",
+                                row["mult"], mode, result])
+            probs = "  ".join(f"{k} {v:5.1%}" for k, v in sorted(row["probs"].items()))
+            lines.append(f"{tag} harga {row['price']:<12g} start {row['startPrice']:<12g} lock {row['lockIn']:5.0f}s "
+                         f"akhir {row['endIn']:5.0f}s | {probs} | terbaik {d} EV ${row['ev']:+.3f} "
+                         f"x{row['mult']:.2f} | {action}")
 
         if not a.once and not a.no_clear:
             print("\033[2J\033[H", end="")

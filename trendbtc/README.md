@@ -1,9 +1,61 @@
 # TrendBTC — estimator peluang ronde prediksi
 
-Ada 2 script:
+Isi folder:
+- **`service.py`** — bot 24/7 + dashboard web untuk VPS (lihat bagian di bawah).
 - **`bot.py`** — membaca SEMUA market & ronde langsung dari API situs (5m, 15m, 1h, opsional 1m),
   menghitung peluang + EV dengan rumus payout situs, dan (opsional, `--live`) memasang taruhan.
 - **`predict.py`** — kalkulator peluang manual + backtest dengan data Binance.
+
+## 🚀 Jalan 24/7 di VPS + dashboard (`service.py`)
+
+![Dashboard](docs/dashboard.png)
+
+`service.py` = bot yang jalan terus + dashboard web. Tanpa `pip install` (hanya Python 3.9+).
+- Scan semua market & durasi, bet otomatis (kalau LIVE nyala), cek hasil, catat ke SQLite.
+- **Token diperbarui otomatis** (refresh token dirotasi & disimpan). Token hanya perlu diisi sekali
+  lewat dashboard. Kalau suatu saat ditolak (mis. Anda logout semua sesi), LIVE otomatis dijeda dan
+  dashboard menampilkan peringatan merah: tempel token baru di panel Token.
+- Batas aman harian: budget, maks jumlah bet, stop-loss (reset 00:00 UTC).
+- Kalau crash / VPS reboot, systemd menyalakan ulang otomatis.
+
+### Pasang di VPS (Ubuntu/Debian), dari terminal Anda sendiri
+```bash
+ssh root@IP_VPS
+git clone https://github.com/ricko130911/Airdrop.git && cd Airdrop
+git checkout ccr-8f184e11-gbv7ix        # atau main setelah di-merge
+sudo bash trendbtc/deploy/install.sh
+```
+Repo private? `git clone` akan minta login GitHub (pakai Personal Access Token sebagai password),
+atau salin folder dari komputer Anda: `scp -r trendbtc root@IP_VPS:/root/`
+lalu `sudo bash /root/trendbtc/deploy/install.sh`.
+
+Installer mencetak **password dashboard** (simpan; bisa dilihat lagi: `sudo cat /etc/trendbtc.env`).
+
+### Buka dashboard (lewat SSH tunnel — dashboard tidak dibuka ke internet)
+```bash
+ssh -L 8787:127.0.0.1:8787 root@IP_VPS
+```
+Biarkan terminal itu terbuka, lalu buka **http://localhost:8787** (user `admin`).
+Dari HP: pakai aplikasi SSH yang mendukung port forwarding (mis. Termius) dengan aturan yang sama.
+
+### Langkah pertama
+1. Biarkan **DRY RUN** minimal 1 hari → lihat P&L "Simulasi" di grafik.
+2. Isi refresh token di panel **Token login** → status harus hijau "Token aktif".
+3. Atur stake, budget, stop-loss → **Simpan**. Baru nyalakan **Taruhan LIVE**.
+
+### Perintah berguna di VPS
+```bash
+journalctl -u trendbtc -f             # log langsung
+systemctl restart trendbtc            # restart
+systemctl stop trendbtc               # matikan bot
+sudo bash trendbtc/deploy/install.sh  # update setelah git pull (password & data tetap)
+```
+Data (riwayat bet, token, pengaturan) ada di `/var/lib/trendbtc` (hanya bisa dibaca user `trendbot`).
+
+Coba dashboard di komputer sendiri tanpa internet (data palsu):
+`TRENDBTC_DASH_PASSWORD=rahasia123 python3 service.py --demo` lalu buka http://127.0.0.1:8787
+
+---
 
 ## bot.py — semua market, 5m / 15m / 1h
 

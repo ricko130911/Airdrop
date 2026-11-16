@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrendBot · Dashboard</title>
+<style>
+:root{
+  --page:#0d0d0d; --surface:#1a1a19; --surface-2:#222220; --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --up:#3987e5; --down:#e66767; --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(900px 500px at 10% -10%,rgba(57,135,229,.16),transparent 60%),
+             radial-gradient(700px 420px at 100% 0%,rgba(230,103,103,.10),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:1480px;margin:0 auto;padding:18px 20px 40px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:.04em}
+.logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--up),#6a5cf0);box-shadow:0 0 22px rgba(57,135,229,.45)}
+.logo svg{width:18px;height:18px}
+.spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;
+  background:var(--surface);box-shadow:inset 0 0 0 1px var(--ring);color:var(--ink-2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.pill.live{color:#fff;background:rgba(208,59,59,.18);box-shadow:inset 0 0 0 1px rgba(208,59,59,.6)}
+.pill.live .dot{background:var(--crit);animation:pulse 1.4s infinite}
+.pill.dry .dot{background:var(--warn)}
+.pill.ok .dot{background:var(--good)} .pill.bad .dot{background:var(--crit)} .pill.wait .dot{background:var(--warn)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(208,59,59,.7)}70%{box-shadow:0 0 0 8px rgba(208,59,59,0)}100%{box-shadow:0 0 0 0 rgba(208,59,59,0)}}
+.banner{display:none;margin:0 0 14px;padding:10px 14px;border-radius:12px;font-weight:500}
+.banner.show{display:block}
+.banner.crit{background:rgba(208,59,59,.14);box-shadow:inset 0 0 0 1px rgba(208,59,59,.5)}
+.banner.warn{background:rgba(250,178,25,.10);box-shadow:inset 0 0 0 1px rgba(250,178,25,.45)}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 40%),var(--surface);
+  border-radius:16px;box-shadow:inset 0 0 0 1px var(--ring),0 10px 30px rgba(0,0,0,.35);padding:16px}
+.card h2{margin:0 0 12px;font-size:13px;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em;
+  display:flex;align-items:center;gap:10px}
+.card h2 .right{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}
+.kpi .label{color:var(--ink-2);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.kpi .value{font-size:30px;font-weight:700;margin:6px 0 2px;letter-spacing:-.01em}
+.kpi .sub{color:var(--muted);font-size:12px}
+.delta-up{color:var(--good)} .delta-down{color:var(--down)}
+.meter{height:6px;border-radius:4px;background:var(--grid);margin-top:10px;overflow:hidden}
+.meter i{display:block;height:100%;border-radius:4px;background:var(--up)}
+.grid-main{display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px}
+.stack{display:grid;gap:14px;align-content:start}
+.seg{display:inline-flex;background:var(--page);border-radius:9px;padding:3px;box-shadow:inset 0 0 0 1px var(--ring)}
+.seg button{all:unset;cursor:pointer;padding:4px 10px;border-radius:7px;font-size:12px;color:var(--ink-2)}
+.seg button.on{background:var(--surface-2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ring)}
+#chart{position:relative;height:260px}
+#chart svg{width:100%;height:100%;display:block}
+.tip{position:absolute;pointer-events:none;background:#0b0b0b;border-radius:8px;padding:6px 9px;font-size:12px;
+  box-shadow:inset 0 0 0 1px var(--ring);opacity:0;transform:translate(-50%,-110%);white-space:nowrap}
+.empty{color:var(--muted);display:grid;place-items:center;height:100%;text-align:center}
+form .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+label.f{display:grid;gap:4px;font-size:12px;color:var(--ink-2)}
+input[type=number],input[type=text],input[type=password]{width:100%;background:var(--page);color:var(--ink);border:0;
+  border-radius:9px;padding:8px 10px;box-shadow:inset 0 0 0 1px var(--ring);font:inherit;font-family:var(--mono)}
+input:focus{outline:2px solid var(--up);outline-offset:1px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;font-size:12px;cursor:pointer;
+  background:var(--page);box-shadow:inset 0 0 0 1px var(--ring);color:var(--ink-2);user-select:none}
+.chip input{accent-color:var(--up);margin:0}
+.chip.on{color:var(--ink);box-shadow:inset 0 0 0 1px var(--up)}
+.btn{all:unset;box-sizing:border-box;cursor:pointer;text-align:center;padding:9px 14px;border-radius:10px;font-weight:600;font-size:13px;
+  background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--ring)}
+.btn:hover{filter:brightness(1.15)} .btn.primary{background:var(--up);color:#fff;box-shadow:none}
+.btn.danger{background:var(--crit);color:#fff;box-shadow:none}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-radius:12px;
+  background:var(--page);box-shadow:inset 0 0 0 1px var(--ring);margin-bottom:12px}
+.toggle b{display:block} .toggle small{color:var(--muted)}
+.switch{position:relative;width:52px;height:28px;border-radius:999px;background:var(--axis);cursor:pointer;flex:none;transition:.2s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s}
+.switch.on{background:var(--crit)} .switch.on::after{left:27px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+  padding:6px 8px;border-bottom:1px solid var(--grid);position:sticky;top:0;background:var(--surface)}
+td{padding:8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+tr:hover td{background:rgba(255,255,255,.02)}
+.scroll{max-height:440px;overflow:auto}
+.mk{font-weight:700} .dur{font-size:11px;padding:2px 6px;border-radius:6px;background:var(--page);
+  box-shadow:inset 0 0 0 1px var(--ring);color:var(--ink-2);margin-left:6px}
+.split{display:flex;gap:2px;height:20px;min-width:180px;border-radius:5px;overflow:hidden}
+.split span{display:flex;align-items:center;padding:0 6px;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden}
+.split .a{background:var(--up);border-radius:4px 0 0 4px} .split .b{background:var(--down);border-radius:0 4px 4px 0;justify-content:flex-end}
+.lockbar{width:90px;height:5px;border-radius:3px;background:var(--grid);overflow:hidden;margin-top:4px}
+.lockbar i{display:block;height:100%;background:var(--ink-2)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;
+  background:var(--page);box-shadow:inset 0 0 0 1px var(--ring);color:var(--ink-2)}
+.tag.cand{color:var(--ink);box-shadow:inset 0 0 0 1px var(--up)}
+.tag.bet{background:var(--up);color:#fff;box-shadow:none}
+.tag.won{color:var(--good);box-shadow:inset 0 0 0 1px var(--good)}
+.tag.lost{color:var(--down);box-shadow:inset 0 0 0 1px var(--down)}
+.tag.fail{color:var(--serious);box-shadow:inset 0 0 0 1px var(--serious)}
+.side-UP,.side-INSIDE{color:var(--up);font-weight:700} .side-DOWN,.side-BREAKOUT{color:var(--down);font-weight:700}
+.log{font-family:var(--mono);font-size:12px;max-height:440px;overflow:auto;display:grid;gap:2px}
+.log div{padding:5px 8px;border-radius:6px;display:grid;grid-template-columns:62px 52px 1fr;gap:8px}
+.log div:hover{background:rgba(255,255,255,.03)}
+.lv{font-weight:700;font-size:11px} .lv-error{color:var(--crit)} .lv-warn{color:var(--warn)} .lv-bet{color:var(--up)}
+.lv-win{color:var(--good)} .lv-info{color:var(--muted)}
+.muted{color:var(--muted)} .small{font-size:12px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(30px);opacity:0;transition:.25s;z-index:9;
+  background:#0b0b0b;padding:10px 16px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--ring),0 8px 30px rgba(0,0,0,.6)}
+.toast.show{opacity:1;transform:translateX(-50%)}
+@media (max-width:1100px){.grid-main{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:560px){.kpis{grid-template-columns:1fr}.kpi .value{font-size:24px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div>TREND<span style="color:var(--up)">BOT</span></div>
+    <span id="modePill" class="pill dry"><span class="dot"></span><span>DRY RUN</span></span>
+    <span id="tokenPill" class="pill"><span class="dot"></span><span>Token</span></span>
+    <span class="spacer"></span>
+    <span class="pill num" id="scanPill">scan —</span>
+    <span class="pill num" id="upPill">uptime —</span>
+  </header>
+
+  <div id="banner" class="banner"></div>
+
+  <section class="kpis">
+    <div class="card kpi"><div class="label" id="kPnlLabel">P&amp;L hari ini</div><div class="value num" id="kPnl">—</div><div class="sub" id="kPnlSub">—</div></div>
+    <div class="card kpi"><div class="label">Win rate hari ini</div><div class="value num" id="kWin">—</div><div class="sub" id="kWinSub">—</div></div>
+    <div class="card kpi"><div class="label">Stake hari ini</div><div class="value num" id="kStake">—</div><div class="sub" id="kStakeSub">—</div><div class="meter"><i id="kStakeBar" style="width:0"></i></div></div>
+    <div class="card kpi"><div class="label">Saldo akun</div><div class="value num" id="kBal">—</div><div class="sub" id="kBalSub">—</div></div>
+  </section>
+
+  <section class="grid-main">
+    <div class="stack">
+      <div class="card">
+        <h2>P&amp;L kumulatif <span class="right"><span class="seg" id="pnlSeg"><button data-m="LIVE">LIVE</button><button data-m="DRY">Simulasi</button></span></span></h2>
+        <div id="chart"><div class="tip" id="tip"></div></div>
+      </div>
+      <div class="card">
+        <h2>Ronde aktif <span class="muted small" id="roundsCount"></span>
+          <span class="right chips" id="durFilter"></span></h2>
+        <div class="scroll"><table id="roundsT">
+          <thead><tr><th>Market</th><th>Harga vs start</th><th>Lock</th><th>Peluang</th><th>Terbaik</th><th>EV / $</th><th>Bonus</th><th>Status</th></tr></thead>
+          <tbody></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="card">
+        <h2>Kontrol</h2>
+        <div class="toggle">
+          <div><b>Taruhan LIVE</b><small id="liveHint">Mati = simulasi saja, aman</small></div>
+          <div class="switch" id="liveSwitch" role="switch" tabindex="0" aria-label="Taruhan LIVE"></div>
+        </div>
+        <form id="cfgForm" autocomplete="off">
+          <div class="row">
+            <label class="f">Stake per bet ($)<input type="number" name="stake" step="0.5" min="1" max="1000"></label>
+            <label class="f">Peluang minimum<input type="number" name="threshold" step="0.01" min="0.5" max="0.99"></label>
+          </div>
+          <div class="row">
+            <label class="f">EV minimum (fraksi stake)<input type="number" name="min_edge" step="0.01" min="0"></label>
+            <label class="f">Interval scan (detik)<input type="number" name="interval" step="1" min="2"></label>
+          </div>
+          <div class="row">
+            <label class="f">Budget harian ($)<input type="number" name="daily_budget" step="1" min="0"></label>
+            <label class="f">Stop-loss harian ($)<input type="number" name="daily_stop_loss" step="1" min="0"></label>
+          </div>
+          <div class="row">
+            <label class="f">Maks bet / hari<input type="number" name="daily_max_bets" step="1" min="0"></label>
+            <label class="f">Market (kosong = semua)<input type="text" name="markets" placeholder="BTC ETH SOL"></label>
+          </div>
+          <label class="f" style="margin-bottom:12px">Durasi ronde
+            <span class="chips" id="durChips"></span></label>
+          <button class="btn primary" type="submit" style="width:100%">Simpan pengaturan</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Token login <span class="right small muted" id="tokChecked"></span></h2>
+        <p class="small muted" style="margin:0 0 10px">Token diperbarui otomatis. Isi lagi hanya kalau statusnya merah.
+          Ambil di trendbtc.app → F12 → Console: <code>localStorage.getItem('trendbtc_refresh_token')</code></p>
+        <form id="tokForm" autocomplete="off" style="display:grid;gap:8px">
+          <input type="password" name="refreshToken" placeholder="Tempel refresh token di sini">
+          <button class="btn" type="submit">Simpan &amp; cek token</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="grid-main">
+    <div class="card">
+      <h2>Riwayat bet <span class="right"><span class="seg" id="betSeg"><button data-m="ALL">Semua</button><button data-m="LIVE">LIVE</button><button data-m="DRY">Simulasi</button></span></span></h2>
+      <div class="scroll"><table id="betsT">
+        <thead><tr><th>Waktu</th><th>Market</th><th>Sisi</th><th>Stake</th><th>Peluang</th><th>EV</th><th>Mode</th><th>Hasil</th><th>P&amp;L</th></tr></thead>
+        <tbody></tbody></table></div>
+    </div>
+    <div class="card">
+      <h2>Log aktivitas</h2>
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = (v, sign) => (v == null || isNaN(v)) ? "—" : (sign && v > 0 ? "+" : (v < 0 ? "−" : "")) + "$" + Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const pct = v => v == null ? "—" : (v*100).toFixed(1) + "%";
+const durName = s => s % 3600 === 0 ? (s/3600) + "h" : (s/60) + "m";
+const fmtPrice = v => v == null ? "—" : (v >= 100 ? v.toLocaleString("en-US",{maximumFractionDigits:2}) : v >= 1 ? v.toFixed(4) : v.toPrecision(4));
+const hhmm = ms => new Date(ms).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+const DURS = [60,300,900,3600];
+let S = null, pnlMode = "DRY", betMode = "ALL", durView = "ALL", formDirty = false;
+
+async function api(path, body){
+  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json","X-Trendbot":"1"}, body:JSON.stringify(body)} : {cache:"no-store"});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600); }
+
+function seg(el, cur, cb){
+  el.querySelectorAll("button").forEach(b => { b.classList.toggle("on", b.dataset.m === cur); b.onclick = () => cb(b.dataset.m); });
+}
+
+function renderHeader(){
+  const live = S.config.live;
+  const mp = $("#modePill"); mp.className = "pill " + (live ? "live" : "dry");
+  mp.lastElementChild.textContent = S.demo ? (live ? "LIVE · DEMO" : "DRY RUN · DEMO") : (live ? "LIVE" : "DRY RUN");
+  const t = S.token, tp = $("#tokenPill");
+  const st = !t.present ? ["wait","Token belum diisi"] : t.ok === false ? ["bad","Token tidak valid"] : t.ok ? ["ok","Token aktif"] : ["wait","Token dicek…"];
+  tp.className = "pill " + st[0]; tp.lastElementChild.textContent = S.demo ? "Mode demo" : st[1];
+  $("#scanPill").textContent = S.lastScan ? `scan ${hhmm(S.lastScan)} · ${S.scanMs}ms` : "scan —";
+  const u = S.uptime; $("#upPill").textContent = `uptime ${Math.floor(u/86400)}h ${Math.floor(u%86400/3600)}j ${Math.floor(u%3600/60)}m`;
+  $("#tokChecked").textContent = t.checkedAt ? "dicek " + hhmm(t.checkedAt) : "";
+  const b = $("#banner");
+  if (!S.demo && t.present && t.ok === false){ b.className="banner show crit"; b.textContent = "⛔ Token tidak valid — bet LIVE dijeda. Tempel refresh token baru di panel Token. (" + (t.error||"") + ")"; }
+  else if (S.lastError){ b.className="banner show warn"; b.textContent = "⚠ Scan terakhir gagal: " + S.lastError; }
+  else if (S.demo){ b.className="banner show warn"; b.textContent = "⚠ MODE DEMO — data palsu, tidak terhubung ke TrendBTC. Jalankan tanpa --demo untuk data asli."; }
+  else b.className = "banner";
+}
+
+function renderKpis(){
+  const m = S.mode, d = S.today[m], tot = S.total[m];
+  $("#kPnlLabel").textContent = "P&L hari ini · " + (m === "LIVE" ? "LIVE" : "simulasi");
+  const kp = $("#kPnl"); kp.textContent = money(d.pnl, true); kp.className = "value num " + (d.pnl > 0 ? "delta-up" : d.pnl < 0 ? "delta-down" : "");
+  $("#kPnlSub").textContent = `Total semua waktu: ${money(tot.pnl, true)} dari ${tot.n} bet`;
+  const decided = d.wins + d.losses;
+  $("#kWin").textContent = decided ? pct(d.wins / decided) : "—";
+  $("#kWinSub").textContent = `${d.wins} menang · ${d.losses} kalah · ${d.pending} menunggu`;
+  $("#kStake").textContent = money(d.staked);
+  const budget = S.config.daily_budget;
+  $("#kStakeSub").textContent = m === "LIVE" ? `dari budget ${money(budget)} · ${d.n}/${S.config.daily_max_bets} bet` : `${d.n} bet simulasi`;
+  $("#kStakeBar").style.width = (m === "LIVE" && budget > 0 ? Math.min(100, d.staked / budget * 100) : 0) + "%";
+  const bal = S.balances;
+  if (bal && typeof bal === "object"){
+    const src = bal.balances && typeof bal.balances === "object" ? bal.balances : bal;
+    const nums = Object.entries(src).filter(([,v]) => typeof v === "number");
+    $("#kBal").textContent = nums.length ? (Math.abs(nums[0][1]) >= 1 ? nums[0][1].toLocaleString("en-US",{maximumFractionDigits:2}) : nums[0][1]) : "—";
+    $("#kBalSub").textContent = nums.length ? nums.map(([k,v]) => `${k}: ${v.toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") : "format saldo tidak dikenal";
+  } else { $("#kBal").textContent = "—"; $("#kBalSub").textContent = "butuh token aktif"; }
+}
+
+function renderChart(){
+  seg($("#pnlSeg"), pnlMode, m => { pnlMode = m; renderChart(); });
+  const box = $("#chart"), tip = $("#tip");
+  box.querySelector("svg")?.remove(); box.querySelector(".empty")?.remove();
+  const pts = S.pnl[pnlMode];
+  if (!pts || pts.length < 2){ const e=document.createElement("div"); e.className="empty"; e.innerHTML = "Belum ada hasil " + (pnlMode==="LIVE"?"bet LIVE":"simulasi") + ".<br><span class='small'>Grafik muncul setelah ≥2 bet selesai.</span>"; box.prepend(e); return; }
+  const W = box.clientWidth, H = box.clientHeight, L = 56, R = 12, T = 12, B = 26;
+  const xs = pts.map(p => p.t), ys = pts.map(p => p.v);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys); const pad = (y1 - y0) * 0.12 || 1; y0 -= pad; y1 += pad;
+  const X = t => L + (x1 === x0 ? 0.5 : (t - x0) / (x1 - x0)) * (W - L - R);
+  const Y = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const ticks = 4, gl = [];
+  for (let i = 0; i <= ticks; i++){ const v = y0 + (y1 - y0) * i / ticks; gl.push(`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)" stroke-width="1"/><text x="${L-8}" y="${Y(v)+4}" fill="var(--muted)" font-size="11" text-anchor="end" font-family="var(--mono)">${money(v)}</text>`); }
+  const line = pts.map((p,i) => (i?"L":"M") + X(p.t).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ");
+  const area = line + ` L${X(x1)} ${Y(0)} L${X(x0)} ${Y(0)} Z`;
+  const last = pts[pts.length-1];
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="P&L kumulatif">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--up)" stop-opacity=".35"/><stop offset="1" stop-color="var(--up)" stop-opacity="0"/></linearGradient></defs>
+    ${gl.join("")}
+    <line x1="${L}" x2="${W-R}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--axis)" stroke-width="1.5"/>
+    <text x="${L}" y="${H-6}" fill="var(--muted)" font-size="11" font-family="var(--mono)">${hhmm(x0)}</text>
+    <text x="${W-R}" y="${H-6}" fill="var(--muted)" font-size="11" text-anchor="end" font-family="var(--mono)">${hhmm(x1)}</text>
+    <path d="${area}" fill="url(#g)"/>
+    <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${X(last.t)}" cy="${Y(last.v)}" r="4" fill="var(--up)" stroke="var(--surface)" stroke-width="2"/>
+    <line id="xh" y1="${T}" y2="${H-B}" stroke="var(--ink-2)" stroke-dasharray="3 3" opacity="0"/>
+    <circle id="xd" r="5" fill="var(--up)" stroke="var(--surface)" stroke-width="2" opacity="0"/>
+    <rect x="${L}" y="0" width="${W-L-R}" height="${H}" fill="transparent" id="hit"/></svg>`;
+  box.insertAdjacentHTML("afterbegin", svg);
+  const hit = box.querySelector("#hit"), xh = box.querySelector("#xh"), xd = box.querySelector("#xd");
+  hit.addEventListener("mousemove", ev => {
+    const rx = ev.offsetX; let best = pts[0];
+    for (const p of pts) if (Math.abs(X(p.t) - rx) < Math.abs(X(best.t) - rx)) best = p;
+    const cx = X(best.t), cy = Y(best.v);
+    xh.setAttribute("x1", cx); xh.setAttribute("x2", cx); xh.setAttribute("opacity", 1);
+    xd.setAttribute("cx", cx); xd.setAttribute("cy", cy); xd.setAttribute("opacity", 1);
+    tip.innerHTML = `<b class="num">${money(best.v, true)}</b> <span class="muted">· ${hhmm(best.t)}</span>`;
+    tip.style.left = cx + "px"; tip.style.top = cy + "px"; tip.style.opacity = 1;
+  });
+  hit.addEventListener("mouseleave", () => { xh.setAttribute("opacity",0); xd.setAttribute("opacity",0); tip.style.opacity = 0; });
+}
+
+function renderRounds(){
+  const f = $("#durFilter");
+  f.innerHTML = ["ALL", ...S.config.durations].map(d => `<span class="chip ${durView==d?"on":""}" data-d="${d}">${d==="ALL"?"Semua":durName(d)}</span>`).join("");
+  f.querySelectorAll(".chip").forEach(c => c.onclick = () => { durView = c.dataset.d === "ALL" ? "ALL" : +c.dataset.d; renderRounds(); });
+  const rows = S.rows.filter(r => durView === "ALL" || r.duration === durView)
+    .sort((a,b) => (b.eligible - a.eligible) || ((b.ev ?? -1e9) - (a.ev ?? -1e9)));
+  $("#roundsCount").textContent = `${rows.length} ronde · ${rows.filter(r => r.eligible).length} kandidat`;
+  $("#roundsT tbody").innerHTML = rows.map(r => {
+    const head = `<td><span class="mk">${esc(String(r.market).replace(/USD$/,""))}</span><span class="dur">${durName(r.duration)}</span>${r.corridor ? '<span class="dur">band ±' + esc(fmtPrice(r.corridor)) + '</span>' : ""}</td>`;
+    if (r.best == null) return `<tr>${head}<td colspan="7" class="muted">${esc(r.note)}</td></tr>`;
+    const diff = r.price - r.startPrice, dcls = diff > 0 ? "side-UP" : diff < 0 ? "side-DOWN" : "muted";
+    const keys = Object.keys(r.probs).sort((a,b) => (a==="UP"||a==="INSIDE") ? -1 : 1);
+    const pa = r.probs[keys[0]], pb = r.probs[keys[1]];
+    const lockPct = Math.max(0, Math.min(100, r.lockIn / r.duration * 100));
+    const evPer = r.ev / S.config.stake;
+    let st = '<span class="tag">—</span>';
+    if (r.action === "BET") st = '<span class="tag bet">● BET</span>';
+    else if (r.action === "simulasi") st = '<span class="tag cand">◆ simulasi</span>';
+    else if (r.action) st = `<span class="tag">${esc(r.action)}</span>`;
+    else if (r.eligible) st = '<span class="tag cand">◆ kandidat</span>';
+    return `<tr>${head}
+      <td class="num">${fmtPrice(r.price)} <span class="${dcls} small">${diff>=0?"+":"−"}${fmtPrice(Math.abs(diff))}</span><div class="small muted">start ${fmtPrice(r.startPrice)}</div></td>
+      <td class="num">${Math.round(r.lockIn)}s<div class="lockbar"><i style="width:${lockPct}%"></i></div></td>
+      <td><div class="split"><span class="a" style="flex:${Math.max(pa,.04)}" title="${keys[0]} ${pct(pa)}">${pa >= .4 ? keys[0] + " " + pct(pa) : ""}</span><span class="b" style="flex:${Math.max(pb,.04)}" title="${keys[1]} ${pct(pb)}">${pb >= .4 ? pct(pb) + " " + keys[1] : ""}</span></div></td>
+      <td class="side-${esc(r.best)}">${esc(r.best)} <span class="num small muted">${pct(r.p)}</span></td>
+      <td class="num ${evPer>0?"delta-up":"delta-down"}">${evPer>0?"+":""}${(evPer*100).toFixed(1)}%</td>
+      <td class="num">×${r.mult.toFixed(2)}</td><td>${st}</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="muted">Tidak ada ronde untuk durasi ini.</td></tr>`;
+}
+
+function renderBets(){
+  seg($("#betSeg"), betMode, m => { betMode = m; renderBets(); });
+  const rows = S.bets.filter(b => betMode === "ALL" || b.mode === betMode);
+  $("#betsT tbody").innerHTML = rows.map(b => {
+    let res = '<span class="tag">menunggu</span>';
+    if (b.status === "failed") res = `<span class="tag fail" title="${esc(b.error)}">gagal</span>`;
+    else if (b.result === "won") res = '<span class="tag won">✓ menang</span>';
+    else if (b.result === "lost") res = '<span class="tag lost">✕ kalah</span>';
+    else if (b.result) res = `<span class="tag">${esc(b.result)}</span>`;
+    return `<tr><td class="num muted">${hhmm(b.ts)}</td>
+      <td><span class="mk">${esc(String(b.market).replace(/USD$/,""))}</span><span class="dur">${durName(b.duration)}</span></td>
+      <td class="side-${esc(b.direction)}">${esc(b.direction)}</td><td class="num">${money(b.stake)}</td>
+      <td class="num">${pct(b.prob)}</td><td class="num">${money(b.ev, true)}</td>
+      <td><span class="tag">${b.mode === "LIVE" ? "LIVE" : "SIM"}</span></td><td>${res}</td>
+      <td class="num ${b.pnl>0?"delta-up":b.pnl<0?"delta-down":""}">${b.pnl == null ? "—" : money(b.pnl, true)}</td></tr>`;
+  }).join("") || `<tr><td colspan="9" class="muted">Belum ada bet.</td></tr>`;
+}
+
+function renderLog(){
+  $("#log").innerHTML = S.events.map(e => `<div><span class="muted">${hhmm(e.t)}</span><span class="lv lv-${esc(e.level)}">${esc(e.level).toUpperCase()}</span><span>${esc(e.msg)}</span></div>`).join("") || '<span class="muted">Belum ada aktivitas.</span>';
+}
+
+function renderControls(){
+  const sw = $("#liveSwitch"); sw.classList.toggle("on", S.config.live); sw.setAttribute("aria-checked", S.config.live);
+  $("#liveHint").textContent = S.config.live ? "AKTIF — bot memasang taruhan sungguhan" : "Mati = simulasi saja, aman";
+  if (formDirty) return;
+  const f = $("#cfgForm");
+  for (const k of ["stake","threshold","min_edge","interval","daily_budget","daily_stop_loss","daily_max_bets"]) f.elements[k].value = S.config[k];
+  f.elements.markets.value = S.config.markets.map(m => m.replace(/USD$/,"")).join(" ");
+  $("#durChips").innerHTML = DURS.map(d => `<label class="chip ${S.config.durations.includes(d)?"on":""}"><input type="checkbox" value="${d}" ${S.config.durations.includes(d)?"checked":""}>${durName(d)}</label>`).join("");
+}
+
+async function refresh(){
+  try { S = await api("/api/state"); }
+  catch(e){ $("#banner").className = "banner show crit"; $("#banner").textContent = "⛔ Dashboard tidak bisa menghubungi service: " + e.message; return; }
+  pnlMode = pnlMode || S.mode;
+  renderHeader(); renderKpis(); renderChart(); renderRounds(); renderBets(); renderLog(); renderControls();
+}
+
+$("#cfgForm").addEventListener("input", e => { formDirty = true; if (e.target.type === "checkbox") e.target.parentElement.classList.toggle("on", e.target.checked); });
+$("#cfgForm").addEventListener("submit", async e => {
+  e.preventDefault(); const f = e.target;
+  const body = {};
+  for (const k of ["stake","threshold","min_edge","interval","daily_budget","daily_stop_loss","daily_max_bets"]) body[k] = Number(f.elements[k].value);
+  body.markets = f.elements.markets.value.split(/[\s,]+/).filter(Boolean);
+  body.durations = [...f.querySelectorAll("#durChips input:checked")].map(i => +i.value);
+  try { await api("/api/config", body); formDirty = false; toast("✓ Pengaturan disimpan"); refresh(); } catch(err){ toast("✕ " + err.message); }
+});
+async function toggleLive(){
+  const on = !S.config.live;
+  if (on && !confirm(`Nyalakan LIVE?\n\nBot akan memasang taruhan SUNGGUHAN $${S.config.stake} per bet, budget $${S.config.daily_budget}/hari, stop-loss $${S.config.daily_stop_loss}/hari.`)) return;
+  try { await api("/api/config", {live: on}); toast(on ? "● LIVE aktif" : "LIVE dimatikan"); refresh(); } catch(err){ toast("✕ " + err.message); }
+}
+$("#liveSwitch").onclick = toggleLive;
+$("#liveSwitch").onkeydown = e => { if (e.key === " " || e.key === "Enter"){ e.preventDefault(); toggleLive(); } };
+$("#tokForm").addEventListener("submit", async e => {
+  e.preventDefault(); const inp = e.target.elements.refreshToken;
+  try { const r = await api("/api/token", {refreshToken: inp.value}); inp.value = ""; toast(r.token.ok ? "✓ Token valid & tersimpan" : "✕ Token ditolak: " + (r.token.error || "")); refresh(); }
+  catch(err){ toast("✕ " + err.message); }
+});
+window.addEventListener("resize", () => S && renderChart());
+pnlMode = null; refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>
