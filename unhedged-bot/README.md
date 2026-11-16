@@ -106,6 +106,30 @@ Strategi lama tetap tersedia dengan `STRATEGY=model`.
 Market tipe **PARIMUTUEL** (taruhan pool) juga didukung: bot menghitung payout dari ukuran
 pool dan hanya bertaruh bila expected value ≥ `MIN_EDGE`.
 
+## Mulai uang asli (uji coba kecil)
+
+1. **Deposit kecil** ke Unhedged (misalnya $20–30).
+2. **Buat API key** (Account → API Keys) dengan scope: `market:read`, `balance:read`, `portfolio:read`,
+   `user:read`, `order:place`, `order:cancel`, `order:read`. **Jangan** aktifkan `balance:withdraw`.
+3. **Ubah `.env`** untuk uji coba 1 kontrak per tembakan:
+   ```
+   UNHEDGED_API_KEY=ak_...
+   DRY_RUN=false
+   SNIPE_USD=1
+   SNIPE_MAX_USD=1
+   SNIPE_LOCKED_USD=1
+   MAX_DAILY_LOSS_USD=5
+   MAX_OPEN_EXPOSURE_USD=10
+   ```
+4. `node src/index.js status` untuk memastikan API key & saldo terbaca, lalu `pm2 restart unhedged-bot`.
+5. Setelah tiap market selesai, bot **mencocokkan hasil dengan fill asli** dari `GET /api/v1/trades`
+   (jumlah kontrak yang benar-benar terisi, harga rata-rata, fee asli). Log: `rekonsiliasi: terisi ...`.
+6. Setelah ±50 tembakan live dengan hasil mirip simulasi, naikkan bertahap (misalnya `SNIPE_USD=3`,
+   `SNIPE_LOCKED_USD=6`, `SNIPE_MAX_USD=10`).
+
+Hentikan kapan saja: `pm2 stop unhedged-bot` (order bot dibatalkan dulu), atau tombol **Jeda Trading**
+di `http://IP_VPS:3005/admin`.
+
 ## Bot belajar dari hasilnya sendiri
 
 Setiap market yang selesai dicatat ke `logs/decisions.jsonl`, termasuk **detail saat order terisi**

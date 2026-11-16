@@ -149,6 +149,19 @@ export class UnhedgedApi {
     return all;
   }
 
+  /** Riwayat fill milik akun (order:read). Satu baris = satu leg order. */
+  async trades({ marketId, startTime } = {}) {
+    const all = [];
+    let cursor;
+    for (let page = 0; page < 10; page++) {
+      const res = await this.request('GET', '/api/v1/trades', { query: { marketId, startTime, limit: 500, cursor }, auth: true });
+      all.push(...(res?.trades ?? []));
+      cursor = res?.nextCursor;
+      if (!cursor) break;
+    }
+    return all;
+  }
+
   placeOrder({ marketId, outcome, side, type = 'Limit', price, quantity }) {
     return this.request('POST', '/api/v1/orders', {
       body: { marketId, outcome, side, type, price, quantity },

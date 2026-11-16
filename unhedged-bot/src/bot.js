@@ -508,6 +508,8 @@ export class Bot {
       });
       const o = res?.order ?? {};
       entry.order = { id: String(o.id), side: d.side, outcome, price: d.price, quantity: d.quantity, probe: !!d.probe, strategy: d.strategy ?? 'model' };
+      entry.orderIds = [...(entry.orderIds ?? []), String(o.id)];
+      entry.firstOrderAt ??= Date.now();
       const px = d.fillsNow ? d.ask : d.price;
       entry.paper = { side: d.side, price: px, quantity: d.quantity, fee: feeFor(px, entry.feeRate ?? 0, this.cfg.feeModel) * d.quantity, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       if (d.fillsNow) entry.paper.fill = this.fillInfo(entry, d.side, px);
@@ -644,6 +646,8 @@ export class Bot {
       source = 'hitung-sendiri';
     }
 
+    // Live: cocokkan dengan fill ASLI dari Unhedged (jumlah kontrak, harga rata-rata, fee)
+    if (this.live && entry.orderIds?.length) await this.reconcileFills(entry);
     // Live: posisi hanya dihitung bila order benar-benar terisi (posisi terdeteksi) atau bet masuk
     const paper = entry.paper && (!this.live || entry.hasPosition || entry.bet) ? entry.paper : null;
     const record = {
@@ -676,6 +680,41 @@ export class Bot {
         ` | PnL ${this.live ? '' : 'simulasi '}$${s.paperPnl.toFixed(2)} (${s.wins}/${s.trades} menang)`,
     );
     return true;
+  }
+
+  /**
+   * Ambil fill asli order bot di market ini dari GET /api/v1/trades, lalu ganti catatan
+   * posisi dengan angka sebenarnya. Bila gagal, catatan perkiraan tetap dipakai (dengan peringatan).
+   */
+  async reconcileFills(entry) {
+    try {
+      const ids = new Set(entry.orderIds.map(String));
+      const rows = await this.api.trades({ marketId: entry.market.id, startTime: entry.firstOrderAt ? entry.firstOrderAt - 60_000 : undefined });
+      let qty = 0;
+      let paid = 0;
+      let fee = 0;
+      for (const t of rows) {
+        if (!ids.has(String(t.order_id)) || t.side !== 'bid') continue;
+        qty += Number(t.qty) || 0;
+        paid += Math.abs(Number(t.payment) || 0);
+        fee += Math.abs(Number(t.fee) || 0);
+      }
+      if (qty <= 0) {
+        if (entry.paper) this.log.info(`[${this.label(entry)}] rekonsiliasi: order TIDAK terisi di Unhedged`);
+        entry.paper = null;
+        entry.hasPosition = false;
+        return;
+      }
+      const side = entry.paper?.side ?? entry.order?.side;
+      const price = paid / qty;
+      if (entry.paper && (entry.paper.quantity !== qty || Math.abs(entry.paper.price - price) > 1e-6)) {
+        this.log.info(`[${this.label(entry)}] rekonsiliasi: terisi ${qty} kontrak @ ${price.toFixed(4)} (fee $${fee.toFixed(4)}), perkiraan bot ${entry.paper.quantity} @ ${entry.paper.price}`);
+      }
+      entry.paper = { ...(entry.paper ?? {}), side, price, quantity: qty, fee, reconciled: true };
+      entry.hasPosition = true;
+    } catch (e) {
+      this.log.warn(`[${this.label(entry)}] rekonsiliasi fill gagal (${e.message}); memakai perkiraan bot`);
+    }
   }
 
   /** Label market untuk log: aset + durasi bila bukan 5 menit, mis. "BTC 15 mnt". */

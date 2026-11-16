@@ -33,3 +33,11 @@ test('satu trade murah tidak membuat sniper dianggap "terbukti"', () => {
   const t = L.sniperTrust(30);
   assert.equal(t.trusted, false, t.reason); // 31/31 baru membuktikan ~92% < impas rata-rata ~95%
 });
+
+test('summarize: trade hasil rekonsiliasi (2 dari 6 kontrak terisi) dihitung dengan jumlah asli', () => {
+  const r = rec(0.97, 2, 20);
+  r.paper.reconciled = true;
+  const [t] = tradesFromRecords([r]);
+  assert.equal(t.quantity, 2);
+  assert.ok(Math.abs(t.pnl - (2 - 2 * 0.97 - 0.001)) < 1e-9);
+});
