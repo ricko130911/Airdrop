@@ -6,7 +6,7 @@ import { PriceFeed } from './prices.js';
 import { Telegram } from './notify.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
-import { Learner, loadRecords } from './analytics.js';
+import { Learner, loadRecords, groupSummary, timeBucket, TIME_BUCKETS } from './analytics.js';
 import path from 'node:path';
 import { discoverMarkets, extractStrike, marketText, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 
@@ -145,13 +145,15 @@ async function telegramSetup(cfg) {
 
 /** Analisis hasil bot dari logs/decisions.jsonl: di mana bot untung/rugi & seberapa tepat modelnya. */
 function analyze(cfg) {
-  const file = process.argv[3] ?? path.join(cfg.logDir, 'decisions.jsonl');
+  const onlyLive = process.argv.includes('--live');
+  const file = process.argv.slice(3).find((a) => !a.startsWith('--')) ?? path.join(cfg.logDir, 'decisions.jsonl');
   const L = new Learner({
     enabled: cfg.adaptive,
     minZoneTrades: cfg.adaptiveMinTrades,
     minCalibrationSamples: cfg.calibrationMinSamples,
   });
-  L.addRecords(loadRecords(file));
+  const all = loadRecords(file);
+  L.addRecords(onlyLive ? all.filter((x) => x.live === true) : all);
   const r = L.report();
   const pct = (x, d = 1) => (x === null || x === undefined ? '-' : (x * 100).toFixed(d) + '%');
   const usd = (x) => (x >= 0 ? '+$' : '-$') + Math.abs(x).toFixed(2);
@@ -159,7 +161,7 @@ function analyze(cfg) {
     `${String(label ?? g.key).padEnd(9)} ${String(g.n).padStart(5)}  ${pct(g.winrate).padStart(7)}  ${pct(g.breakeven).padStart(7)}  ${usd(g.pnl).padStart(9)}  ${pct(g.roi).padStart(7)}${g.blocked ? '  DIBLOKIR' : ''}`;
   const head = `${'zona'.padEnd(9)} ${'trade'.padStart(5)}  ${'menang'.padStart(7)}  ${'impas'.padStart(7)}  ${'PnL'.padStart(9)}  ${'ROI'.padStart(7)}`;
 
-  console.log(`\nFile: ${file}`);
+  console.log(`\nFile: ${file}${onlyLive ? '  (HANYA trade uang asli / LIVE)' : '  (simulasi + live; tambahkan --live untuk uang asli saja)'}`);
   console.log(`Market selesai: ${r.markets} | trade: ${r.total.n} | PnL ${usd(r.total.pnl)} | ROI ${pct(r.total.roi)} | menang ${pct(r.total.winrate)} vs impas ${pct(r.total.breakeven)}`);
   if (!r.markets) {
     console.log('\nBelum ada data versi baru. Biarkan bot berjalan dulu.');
@@ -185,10 +187,32 @@ function analyze(cfg) {
     console.log(head);
     for (const g of r.byDuration) console.log(row(g, g.key >= 3600 ? `${g.key / 3600} jam` : `${Math.round(g.key / 60)} mnt`));
   }
-  console.log('\n== Menurut sisa waktu saat order terisi ==');
+  // ---- Khusus sniper (tanpa campuran strategi lama)
+  const sn = L.trades.filter((t) => t.strategy === 'sniper');
+  if (sn.length) {
+    console.log('\n== SNIPER menurut sisa waktu saat terisi ==');
+    console.log(head);
+    for (const g of groupSummary(sn, (t) => (t.secondsLeft === null ? null : timeBucket(t.secondsLeft)), TIME_BUCKETS.map((b) => b.key))) {
+      if (g.n) console.log(row(g));
+    }
+    console.log('\n== SNIPER menurut aset ==');
+    console.log(head);
+    for (const g of groupSummary(sn, (t) => t.asset)) console.log(row(g));
+    const losses = sn.filter((t) => !t.won);
+    console.log(`\n== Kekalahan sniper (${losses.length}) ==`);
+    for (const t of losses) {
+      const dur = t.durationSec >= 3600 ? `${t.durationSec / 3600} jam` : `${Math.round((t.durationSec ?? 300) / 60)} mnt`;
+      console.log(
+        `- ${String(t.ts ?? '').slice(0, 16).replace('T', ' ')}  ${t.asset} ${dur}  ${t.side.toUpperCase()} ${Math.round(t.quantity)} @ ${t.price.toFixed(2)}` +
+          `  sisa ${t.secondsLeft ?? '?'} dtk  yakin ${t.prob !== null ? (t.prob * 100).toFixed(1) + '%' : '?'}  ${usd(t.pnl)}`,
+      );
+    }
+  }
+
+  console.log('\n== Menurut sisa waktu saat order terisi (SEMUA strategi) ==');
   console.log(head);
   for (const g of r.byTime) console.log(row(g));
-  console.log('\n== Menurut aset ==');
+  console.log('\n== Menurut aset (SEMUA strategi) ==');
   console.log(head);
   for (const g of r.byAsset) console.log(row(g));
   console.log('\n== Menurut keyakinan model saat terisi (kalibrasi trade) ==');
