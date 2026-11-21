@@ -100,6 +100,7 @@ function render(s) {
   mode.className = 'pill ' + (s.mode === 'LIVE' ? 'is-live' : 'is-dry');
 
   if (s.halted) setStatus('bad', 'Dihentikan');
+  else if (s.maintenance) setStatus('warn', 'Unhedged maintenance');
   else if (s.paused) setStatus('warn', 'Dijeda');
   else setStatus('ok', 'Aktif');
 

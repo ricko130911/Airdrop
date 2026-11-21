@@ -34,6 +34,8 @@ export class Bot {
     this.account = { available: null, total: null, lockedEngine: null, username: null };
     this.lastPriceRefresh = 0;
     this.stratStats = {}; // statistik per strategi (sniper, sniper-probe, model)
+    this.tradingPausedUntil = 0; // trading Unhedged dijeda (maintenance / HTTP 503)
+    this.maintenanceReason = null;
     // Pembelajaran dari hasil sendiri: kalibrasi peluang + deteksi zona rugi
     this.learner = new Learner({
       enabled: cfg.adaptive !== false,
@@ -145,7 +147,7 @@ export class Bot {
       if (secondsLeft <= -20) {
         // Coba ambil hasil resmi paling sering sekali per 5 detik per market (hemat request)
         if (this.fastMode || Date.now() < (entry.nextSettleAt ?? 0)) continue;
-        entry.nextSettleAt = Date.now() + 5000;
+        entry.nextSettleAt = Date.now() + ((entry.settleAttempts ?? 0) >= 8 ? 30_000 : 5000);
         const done = await this.settle(entry);
         if (done) this.markets.delete(entry.market.id);
         continue;
@@ -521,6 +523,7 @@ export class Bot {
       this.log.info(`${tag} order #${o.id} status=${o.status}`);
     } catch (e) {
       this.log.error(`${tag} gagal pasang order: ${e.message}`);
+      if (this.isMaintenanceError(e)) this.enterMaintenance(e.message);
       // POST /orders tidak idempoten. Bila timeout/jaringan, cek apakah order ternyata masuk.
       if (!e.status) await this.recoverUnknownOrder(entry, d, outcome);
     }
@@ -629,6 +632,13 @@ export class Bot {
     try {
       const res = await this.api.market(entry.market.id);
       const mk = res?.market ?? res;
+      if (String(mk?.status ?? '').toUpperCase() === 'VOIDED') {
+        // Market dibatalkan Unhedged (mis. saat maintenance): dana dikembalikan, tidak ada menang/kalah
+        const hadPosition = this.live ? entry.hasPosition || !!entry.orderIds?.length : !!entry.paper;
+        this.log.warn(`[${this.label(entry)}] market DIBATALKAN (VOIDED) oleh Unhedged${hadPosition ? ': posisi dikembalikan, tidak dihitung menang/kalah' : ''}`);
+        this.log.journal({ kind: 'void', live: this.live, marketId: entry.market.id, asset: entry.asset, endMs: entry.window.endMs, paper: entry.paper ?? null });
+        return true;
+      }
       if (mk?.winningOutcome !== undefined && mk?.winningOutcome !== null) {
         outcomeUp = Number(mk.winningOutcome) === entry.sides.up.index ? 1 : 0;
         source = 'unhedged';
@@ -643,7 +653,17 @@ export class Bot {
       /* belum resolve */
     }
     if (outcomeUp === null) {
-      if (entry.settleAttempts < 8) return false; // tunggu hasil resmi sedikit lagi
+      // Tunggu hasil resmi. Posisi uang asli ditunggu sampai ~2 jam (mis. tertunda karena maintenance),
+      // tanpa posisi cukup ~40 detik lalu pakai hitungan sendiri.
+      const holdsRealMoney = this.live && (entry.hasPosition || entry.orderIds?.length > 0);
+      const maxAttempts = holdsRealMoney ? 8 + 230 : 8;
+      if (entry.settleAttempts < maxAttempts) {
+        if (holdsRealMoney && entry.settleAttempts === 8) {
+          this.log.warn(`[${this.label(entry)}] hasil resmi belum keluar; posisi uang asli, menunggu hasil resmi Unhedged (maks ~2 jam)`);
+        }
+        return false;
+      }
+      if (holdsRealMoney) this.log.warn(`[${this.label(entry)}] hasil resmi tidak keluar dalam ~2 jam; dicatat dengan hitungan bot (cek di website)`);
       const avgSec = resolverInfo(entry.market).averagingSeconds || 60;
       const finalPrice = await this.prices.twap(entry.asset, entry.window.endMs - avgSec * 1000, entry.window.endMs);
       if (finalPrice === null) return true;
@@ -723,6 +743,22 @@ export class Bot {
     }
   }
 
+  /** Error yang berarti trading Unhedged sedang dijeda (maintenance / admin). */
+  isMaintenanceError(e) {
+    const text = `${e?.message ?? ''} ${JSON.stringify(e?.body ?? '')}`;
+    return e?.status === 503 || /maintenance|pemeliharaan|temporarily disabled|trading.*(paused|disabled)/i.test(text);
+  }
+
+  /** Jeda menembak beberapa menit agar tidak membanjiri API saat maintenance. */
+  enterMaintenance(reason) {
+    const wasPaused = Date.now() < this.tradingPausedUntil;
+    this.tradingPausedUntil = Date.now() + (this.cfg.maintenancePauseMs ?? 5 * 60_000);
+    this.maintenanceReason = reason;
+    if (!wasPaused) {
+      this.log.warn(`Trading Unhedged sedang DIJEDA (maintenance?). Bot berhenti menembak ${Math.round((this.cfg.maintenancePauseMs ?? 300000) / 60000)} menit lalu mencoba lagi. Alasan: ${reason}`);
+    }
+  }
+
   /** Label market untuk log: aset + durasi bila bukan 5 menit, mis. "BTC 15 mnt". */
   label(entry) {
     return `${entry.asset}${entry.durationSec && entry.durationSec !== 300 ? ' ' + durationLabel(entry.durationSec) : ''}`;
@@ -766,6 +802,10 @@ export class Bot {
     // Order sniper yang tidak langsung terisi tidak dikejar: batalkan
     if (entry.order) {
       await this.cancelOrder(entry, 'tembakan tidak terisi, tidak dikejar');
+      return;
+    }
+    if (Date.now() < this.tradingPausedUntil) {
+      entry.lastDecision = `trading Unhedged dijeda (maintenance), coba lagi ${Math.ceil((this.tradingPausedUntil - Date.now()) / 1000)} dtk lagi`;
       return;
     }
     const today = this.todayStats();
@@ -977,6 +1017,7 @@ export class Bot {
       startedAt: this.startedAt,
       paused: this.paused,
       halted: this.halted,
+      maintenance: Date.now() < this.tradingPausedUntil ? { until: this.tradingPausedUntil, reason: this.maintenanceReason } : null,
       account: { ...this.account, dayPnl: this.live ? this.dayPnl : null, bankroll: this.bankroll },
       exposureUsd: this.exposureUsd(),
       config: {

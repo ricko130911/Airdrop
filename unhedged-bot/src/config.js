@@ -70,6 +70,8 @@ export function loadConfig() {
     snipeMaxPrice: num('SNIPE_MAX_PRICE', 0.97),
     // Ask di bawah ini saat bot >=97% yakin dianggap data basi/anomali dan tidak diambil
     snipeMinPrice: num('SNIPE_MIN_PRICE', 0.8),
+    // Lama jeda menembak setelah Unhedged menolak order karena maintenance (ms)
+    maintenancePauseMs: num('MAINTENANCE_PAUSE_MS', 5 * 60_000),
     snipeMinEv: num('SNIPE_MIN_EV', 0.015),
     snipeUsd: num('SNIPE_USD', 3),
     // Ukuran dinamis: naik bila yakin, tapi hanya setelah sniper terbukti
