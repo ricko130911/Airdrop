@@ -3,15 +3,21 @@ import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, tw
 import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan } from './strategy.js';
 import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
 import path from 'node:path';
+import { escapeHtml as h } from './notify.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmt = (x, d = 3) => (x === null || x === undefined || !Number.isFinite(x) ? '-' : x.toFixed(d));
+const usd = (x, sign = false) =>
+  Number.isFinite(x) ? `${x < 0 ? '−' : sign && x > 0 ? '+' : ''}$${Math.abs(x).toFixed(2)}` : '-';
 
 export class Bot {
   /**
    * @param {{cfg:any, api: import('./api.js').UnhedgedApi, prices: import('./prices.js').PriceFeed, log:any}} deps
    */
-  constructor({ cfg, api, prices, log }) {
+  constructor({ cfg, api, prices, log, notifier = null }) {
+    this.tg = notifier; // notifikasi Telegram (opsional)
+    this.lastErrorNotify = 0;
+    this.remNotifiedDay = null;
     this.cfg = cfg;
     this.api = api;
     this.prices = prices;
@@ -88,6 +94,14 @@ export class Bot {
       for (const o of open) this.foreignMarkets.add(o.market_id ?? o.marketId);
       if (open.length) this.log.warn(`${open.length} order terbuka yang sudah ada akan dibiarkan (market tersebut dilewati).`);
     }
+    if (this.live || this.cfg.telegramNotifyDry) {
+      const c = this.cfg;
+      this.notify(
+        `🤖 <b>Unhedged bot aktif</b> · ${this.live ? 'LIVE' : 'SIMULASI'}\n` +
+          (this.live ? `Akun ${h(this.account.username ?? '-')} · saldo ${usd(this.account.available)}\n` : '') +
+          (c.strategy === 'sniper' ? `Sniper ${usd(c.snipeUsd)}–${usd(c.snipeMaxUsd)} per tembakan · market ${c.marketDurations.map((d) => (d >= 3600 ? d / 3600 + 'j' : d / 60 + 'm')).join('/')}` : `Strategi ${h(c.strategy)}`),
+      );
+    }
     while (!this.stopping) {
       const t0 = Date.now();
       try {
@@ -102,6 +116,7 @@ export class Bot {
 
   async stop() {
     this.stopping = true;
+    this.notify('⏹ <b>Unhedged bot berhenti</b>');
     if (!this.live) return;
     this.log.info('Menghentikan bot: membatalkan semua order milik bot...');
     for (const entry of this.markets.values()) await this.cancelOrder(entry, 'bot berhenti');
@@ -499,6 +514,7 @@ export class Bot {
 
     if (!this.live) {
       this.log.info(`[DRY] ${msg}`);
+      if (this.cfg.telegramNotifyDry) this.notifyShot(entry, d, d.fillsNow ? d.ask : d.price, 'simulasi');
       entry.order = { id: `dry-${Date.now()}`, side: d.side, outcome, price: d.price, quantity: d.quantity, dry: true, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       return;
     }
@@ -521,9 +537,14 @@ export class Bot {
       entry.paper = { side: d.side, price: px, quantity: d.quantity, fee: feeFor(px, entry.feeRate ?? 0, this.cfg.feeModel) * d.quantity, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       if (d.fillsNow) entry.paper.fill = this.fillInfo(entry, d.side, px);
       this.log.info(`${tag} order #${o.id} status=${o.status}`);
+      this.notifyShot(entry, d, px, o.status);
     } catch (e) {
       this.log.error(`${tag} gagal pasang order: ${e.message}`);
       if (this.isMaintenanceError(e)) this.enterMaintenance(e.message);
+      else if (Date.now() - this.lastErrorNotify > 5 * 60_000) {
+        this.lastErrorNotify = Date.now();
+        this.notify(`⚠️ <b>Order gagal</b> ${h(this.label(entry))}\n<code>${h(e.message).slice(0, 300)}</code>`);
+      }
       // POST /orders tidak idempoten. Bila timeout/jaringan, cek apakah order ternyata masuk.
       if (!e.status) await this.recoverUnknownOrder(entry, d, outcome);
     }
@@ -636,6 +657,7 @@ export class Bot {
         // Market dibatalkan Unhedged (mis. saat maintenance): dana dikembalikan, tidak ada menang/kalah
         const hadPosition = this.live ? entry.hasPosition || !!entry.orderIds?.length : !!entry.paper;
         this.log.warn(`[${this.label(entry)}] market DIBATALKAN (VOIDED) oleh Unhedged${hadPosition ? ': posisi dikembalikan, tidak dihitung menang/kalah' : ''}`);
+        if (hadPosition) this.notify(`🚫 ${h(this.label(entry))} <b>DIBATALKAN</b> oleh Unhedged — dana dikembalikan, tidak dihitung`);
         this.log.journal({ kind: 'void', live: this.live, marketId: entry.market.id, asset: entry.asset, endMs: entry.window.endMs, paper: entry.paper ?? null });
         return true;
       }
@@ -696,6 +718,7 @@ export class Bot {
     this.log.journal(record);
     this.learner.addRecord(record);
     const trade = this.applySettleRecord(record);
+    if (trade && !trade.probe && (this.live || this.cfg.telegramNotifyDry)) await this.notifyResult(entry, trade, outcomeUp, source);
     const s = this.stats;
     const tradeNote = trade
       ? ` | posisi ${trade.side.toUpperCase()} ${trade.won ? 'MENANG' : 'KALAH'} ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl.toFixed(2)}${trade.probe ? ' (probe)' : ''}`
@@ -726,7 +749,10 @@ export class Bot {
         fee += Math.abs(Number(t.fee) || 0);
       }
       if (qty <= 0) {
-        if (entry.paper) this.log.info(`[${this.label(entry)}] rekonsiliasi: order TIDAK terisi di Unhedged`);
+        if (entry.paper) {
+          this.log.info(`[${this.label(entry)}] rekonsiliasi: order TIDAK terisi di Unhedged`);
+          this.notify(`↩️ ${h(this.label(entry))}: order <b>tidak terisi</b> (tidak ada uang terpakai)`);
+        }
         entry.paper = null;
         entry.hasPosition = false;
         return;
@@ -743,6 +769,45 @@ export class Bot {
     }
   }
 
+  /** Kirim notifikasi Telegram (bila dikonfigurasi). Tidak pernah melempar error. */
+  notify(html) {
+    try {
+      this.tg?.send(html);
+    } catch {
+      /* abaikan */
+    }
+  }
+
+  notifyShot(entry, d, price, status) {
+    const cost = d.quantity * price;
+    const left = Math.max(0, Math.round((entry.window.endMs - Date.now()) / 1000));
+    const prob = Number.isFinite(d.prob) ? ` · yakin ${(d.prob * 100).toFixed(1)}%` : '';
+    this.notify(
+      `🎯 <b>TEMBAK ${h(this.label(entry))} ${d.side.toUpperCase()}</b>${this.live ? '' : ' [SIMULASI]'}\n` +
+        `${d.quantity} kontrak @ ${price.toFixed(2)} = ${usd(cost)}\n` +
+        `Sisa ${left} dtk${prob}${status ? ` · ${h(status)}` : ''}`,
+    );
+  }
+
+  async notifyResult(entry, trade, outcomeUp, source) {
+    if (this.live) await this.refreshRisk().catch(() => {}); // saldo terbaru
+    const today = this.todayStats();
+    const by = this.stratStats;
+    const tot = ['sniper', 'sniper-probe'].reduce(
+      (a, k) => ({ pnl: a.pnl + (by[k]?.pnl ?? 0), n: a.n + (by[k]?.trades ?? 0), w: a.w + (by[k]?.wins ?? 0) }),
+      { pnl: 0, n: 0, w: 0 },
+    );
+    const cost = trade.quantity * trade.price;
+    this.notify(
+      `${trade.won ? '✅ <b>MENANG</b>' : '❌ <b>KALAH</b>'} — ${h(this.label(entry))} ${trade.side.toUpperCase()}${this.live ? '' : ' [SIMULASI]'}\n` +
+        `${Math.round(trade.quantity)} kontrak @ ${trade.price.toFixed(2)} (${usd(cost)}) → <b>${usd(trade.pnl, true)}</b>\n` +
+        `Hasil: ${outcomeUp ? 'UP' : 'DOWN'}${source && source !== 'unhedged' ? ` (${h(source)})` : ''}\n` +
+        `Hari ini: ${usd(today.sniperPnl, true)} (${today.sniperTrades} tembakan)\n` +
+        `Total: ${usd(tot.pnl, true)} · menang ${tot.w}/${tot.n}` +
+        (this.live && Number.isFinite(this.account.available) ? `\nSaldo: ${usd(this.account.available)}` : ''),
+    );
+  }
+
   /** Error yang berarti trading Unhedged sedang dijeda (maintenance / admin). */
   isMaintenanceError(e) {
     const text = `${e?.message ?? ''} ${JSON.stringify(e?.body ?? '')}`;
@@ -755,6 +820,7 @@ export class Bot {
     this.tradingPausedUntil = Date.now() + (this.cfg.maintenancePauseMs ?? 5 * 60_000);
     this.maintenanceReason = reason;
     if (!wasPaused) {
+      this.notify(`🛠 <b>Unhedged maintenance</b>\nOrder ditolak. Bot jeda menembak ${Math.round((this.cfg.maintenancePauseMs ?? 300000) / 60000)} menit lalu mencoba lagi.`);
       this.log.warn(`Trading Unhedged sedang DIJEDA (maintenance?). Bot berhenti menembak ${Math.round((this.cfg.maintenancePauseMs ?? 300000) / 60000)} menit lalu mencoba lagi. Alasan: ${reason}`);
     }
   }
@@ -811,6 +877,10 @@ export class Bot {
     const today = this.todayStats();
     if (this.cfg.snipeMaxLossesPerDay > 0 && today.snipeLosses >= this.cfg.snipeMaxLossesPerDay) {
       entry.lastDecision = `rem sniper: ${today.snipeLosses} kalah hari ini, lanjut besok`;
+      if (this.remNotifiedDay !== today.day) {
+        this.remNotifiedDay = today.day;
+        this.notify(`🛑 <b>Rem harian aktif</b>: ${today.snipeLosses} kalah hari ini (${usd(today.sniperPnl, true)}). Sniper berhenti sampai besok (00:00 UTC).`);
+      }
       return;
     }
     if (this.cfg.dailyProfitTargetUsd > 0 && today.pnl >= this.cfg.dailyProfitTargetUsd) {

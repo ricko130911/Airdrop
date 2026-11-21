@@ -3,6 +3,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
+import { Telegram } from './notify.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
 import { Learner, loadRecords } from './analytics.js';
@@ -17,6 +18,7 @@ Perintah:
                                Tambah --raw [ASET] untuk melihat JSON mentah market (mis. --raw CC)
   node src/index.js check      Cek koneksi ke sumber harga resmi (Binance, Bybit) dari server ini
   node src/index.js analyze    Analisis hasil: untung/rugi per zona waktu & aset, kalibrasi model
+  node src/index.js telegram   Atur & uji notifikasi Telegram (isi TELEGRAM_CHAT_ID)
   node src/index.js status     Tampilkan saldo, equity, order terbuka, dan posisi (butuh API key)
 
 Konfigurasi lewat file .env (salin dari .env.example).`;
@@ -35,6 +37,7 @@ async function main() {
   if (cmd === 'discover') return discover(api, cfg);
   if (cmd === 'check') return check(api, cfg, log);
   if (cmd === 'analyze') return analyze(cfg);
+  if (cmd === 'telegram') return telegramSetup(cfg);
   if (cmd === 'status') return status(api);
   if (cmd !== 'run') {
     console.log(HELP);
@@ -44,7 +47,10 @@ async function main() {
 
   if (!cfg.dryRun && !cfg.apiKey) throw new Error('DRY_RUN=false membutuhkan UNHEDGED_API_KEY di .env');
   const prices = new PriceFeed({ api, logger: log });
-  const bot = new Bot({ cfg, api, prices, log });
+  const notifier = new Telegram({ token: cfg.telegramBotToken, chatId: cfg.telegramChatId, log });
+  if (notifier.enabled) log.info('Notifikasi Telegram aktif');
+  else if (cfg.telegramBotToken) log.warn('TELEGRAM_CHAT_ID kosong: jalankan `node src/index.js telegram` untuk mengisinya');
+  const bot = new Bot({ cfg, api, prices, log, notifier });
 
   let stopping = false;
   const shutdown = async (sig) => {
@@ -52,6 +58,7 @@ async function main() {
     stopping = true;
     log.info(`${sig} diterima, berhenti...`);
     await bot.stop().catch((e) => log.error(e.message));
+    await notifier.flush().catch(() => {});
     process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -96,6 +103,44 @@ async function discover(api, cfg) {
       '\nTidak ada market yang cocok. Jalankan dengan --raw untuk melihat format market, lalu atur MARKET_REGEX / FEED_CATEGORY di .env.',
     );
   }
+}
+
+/** Bantu mengisi TELEGRAM_CHAT_ID dan kirim pesan uji. */
+async function telegramSetup(cfg) {
+  if (!cfg.telegramBotToken) {
+    console.log('TELEGRAM_BOT_TOKEN belum diisi di .env. Buat bot di @BotFather lalu isi tokennya.');
+    process.exitCode = 1;
+    return;
+  }
+  const tg = new Telegram({ token: cfg.telegramBotToken, chatId: cfg.telegramChatId });
+  try {
+    const me = await tg.call('getMe');
+    console.log(`Bot Telegram: @${me.username}`);
+  } catch (e) {
+    console.log(`Token tidak valid / tidak bisa menghubungi Telegram: ${e.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!cfg.telegramChatId) {
+    const updates = await tg.call('getUpdates', { limit: 50 }).catch(() => []);
+    const chats = new Map();
+    for (const u of updates) {
+      const c = u.message?.chat ?? u.channel_post?.chat ?? u.my_chat_member?.chat;
+      if (c) chats.set(String(c.id), c.title ?? [c.first_name, c.last_name].filter(Boolean).join(' ') ?? c.username);
+    }
+    if (!chats.size) {
+      console.log('Belum ada pesan ke bot. Buka bot Anda di Telegram, kirim /start, lalu jalankan perintah ini lagi.');
+      return;
+    }
+    console.log('Chat yang ditemukan:');
+    for (const [id, name] of chats) console.log(`  ${id}  (${name})`);
+    const [first] = chats.keys();
+    console.log(`\nTambahkan ke .env:\n  TELEGRAM_CHAT_ID=${first}\nLalu jalankan perintah ini lagi untuk mengirim pesan uji.`);
+    return;
+  }
+  tg.send('✅ <b>Uji notifikasi Unhedged bot berhasil.</b>\nAnda akan menerima kabar setiap tembakan dan hasil round.');
+  await tg.flush(15_000);
+  console.log(tg.queue.length ? 'Pesan uji GAGAL terkirim (cek TELEGRAM_CHAT_ID).' : 'Pesan uji terkirim. Cek Telegram Anda.');
 }
 
 /** Analisis hasil bot dari logs/decisions.jsonl: di mana bot untung/rugi & seberapa tepat modelnya. */

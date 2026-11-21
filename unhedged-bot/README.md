@@ -130,6 +130,19 @@ pool dan hanya bertaruh bila expected value ≥ `MIN_EDGE`.
 Hentikan kapan saja: `pm2 stop unhedged-bot` (order bot dibatalkan dulu), atau tombol **Jeda Trading**
 di `http://IP_VPS:3005/admin`.
 
+## Notifikasi Telegram
+
+Bot bisa mengirim kabar ke Telegram: setiap **tembakan**, **hasil round** (menang/kalah, PnL hari ini,
+total, saldo), dan **peringatan** (maintenance, rem harian, market dibatalkan, order gagal).
+
+1. Buat bot di **@BotFather** dan salin tokennya.
+2. Buka bot Anda di Telegram dan kirim **/start**.
+3. Isi `.env` di VPS: `TELEGRAM_BOT_TOKEN=...`
+4. Jalankan `node src/index.js telegram` → perintah ini menampilkan `TELEGRAM_CHAT_ID=...`; tambahkan ke `.env`.
+5. Jalankan `node src/index.js telegram` sekali lagi untuk mengirim pesan uji, lalu `pm2 restart unhedged-bot`.
+
+Token hanya disimpan di `.env` (tidak ikut ke git). Jangan bagikan token ke siapa pun.
+
 ## Bot belajar dari hasilnya sendiri
 
 Setiap market yang selesai dicatat ke `logs/decisions.jsonl`, termasuk **detail saat order terisi**

@@ -111,6 +111,11 @@ export function loadConfig() {
     logLevel: str('LOG_LEVEL', 'info'),
     logDir: str('LOG_DIR', 'logs'),
 
+    // Notifikasi Telegram (token dari @BotFather, chat id dari `node src/index.js telegram`)
+    telegramBotToken: str('TELEGRAM_BOT_TOKEN'),
+    telegramChatId: str('TELEGRAM_CHAT_ID'),
+    telegramNotifyDry: bool('TELEGRAM_NOTIFY_DRY', false),
+
     dashboardEnabled: bool('DASHBOARD_ENABLED', true),
     dashboardHost: str('DASHBOARD_HOST', '0.0.0.0'),
     dashboardPort: num('DASHBOARD_PORT', 3005),
