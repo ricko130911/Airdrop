@@ -510,6 +510,7 @@ impl Engine {
                 up_ask: m.up.best().map(px_to_f64),
                 down_ask: m.down.best().map(px_to_f64),
                 fee_rate: m.info.fee.rate,
+                fee_exp: m.info.fee.exponent,
                 secs_left: m.info.end_ts - now_s,
                 spent: m.spent,
                 shares_up: m.shares_up,

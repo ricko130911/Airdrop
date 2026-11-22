@@ -22,7 +22,7 @@
   #meta{grid-column:2;grid-row:3}
   .mk{display:flex;gap:10px;padding:2px 4px;cursor:pointer;white-space:nowrap}
   .mk.sel{background:#1e3c46;color:#fff}
-  .mk .n{color:var(--dim)} .mk .l{color:var(--c);min-width:70px}
+  .mk .n{color:var(--dim)} .mk .l{color:var(--c);min-width:110px}
   .dot{margin-left:auto}
   .kv{display:flex;justify-content:space-between;gap:8px;white-space:nowrap}
   #logbox{overflow:auto;flex:1;white-space:pre;min-height:0}
@@ -89,12 +89,12 @@ function render(st){
   const fired = st.locks + st.misses + st.legRisk;
   $('kv').innerHTML =
     kv('Σ best asks', f(sum,3), sum != null && sum <= st.maxPairCost ? 'y' : 'w') +
-    kv('UP best ask', f(m.up,2), 'g') +
-    kv('DOWN best ask', f(m.down,2), 'r') +
+    kv('UP best ask', f(m.up,3), 'g') +
+    kv('DOWN best ask', f(m.down,3), 'r') +
     kv('Edge', edge == null ? '-' : (edge>=0?'+':'') + edge.toFixed(3), edge > 0 ? 'g' : 'y') +
     kv('Fire threshold Σ ≤', st.maxPairCost.toFixed(3)) +
     kv('Time left', m.left == null ? '-' : dur(m.left)) +
-    kv('Taker fee rate', m.fee ?? '-') +
+    kv('Taker fee rate', m.fee == null ? '-' : `${m.fee} (exp ${m.feeExp})`) +
     kv('Position UP/DOWN', m.shUp == null ? '-' : `${m.shUp.toFixed(0)} / ${m.shDown.toFixed(0)}`) +
     kv('Market cost', m.spent == null ? '-' : '$' + m.spent.toFixed(2)) +
     kv('Locked PnL', (st.pnl>=0?'+':'') + st.pnl.toFixed(2), st.pnl >= 0 ? 'g' : 'r') +

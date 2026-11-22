@@ -23,6 +23,7 @@ pub struct MarketView {
     pub up_ask: Option<f64>,
     pub down_ask: Option<f64>,
     pub fee_rate: f64,
+    pub fee_exp: u32,
     pub secs_left: i64,
     pub spent: f64,
     pub shares_up: f64,

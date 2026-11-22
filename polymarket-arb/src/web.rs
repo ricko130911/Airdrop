@@ -89,7 +89,7 @@ async fn state(AxState(app): AxState<App>, headers: HeaderMap) -> Response {
         .map(|m| {
             json!({
                 "label": m.label, "slug": m.slug, "up": m.up_ask, "down": m.down_ask,
-                "fee": m.fee_rate, "left": m.secs_left, "spent": m.spent,
+                "fee": m.fee_rate, "feeExp": m.fee_exp, "left": m.secs_left, "spent": m.spent,
                 "shUp": m.shares_up, "shDown": m.shares_down,
             })
         })

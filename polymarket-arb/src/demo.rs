@@ -121,6 +121,7 @@ pub async fn run(dash: Arc<Dash>) {
                 up_ask: s.up.best().map(px_to_f64),
                 down_ask: s.down.best().map(px_to_f64),
                 fee_rate: 0.0,
+                fee_exp: 0,
                 secs_left: s.period - now % s.period,
                 spent: s.spent,
                 shares_up: s.sh_up,

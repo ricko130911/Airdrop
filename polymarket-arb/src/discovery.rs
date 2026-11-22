@@ -137,7 +137,11 @@ pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>)
                 // current window + the next one (pre-subscribe so we're ready at the open)
                 for s in [start, start + iv.secs] {
                     let slug = format!("{asset}-updown-{}-{s}", iv.label);
-                    let label = format!("{asset}-{}", iv.label);
+                    // window start time (UTC) keeps the current and next window apart
+                    let hhmm = polymarket_client_sdk_v2::types::DateTime::<polymarket_client_sdk_v2::types::Utc>::from_timestamp(s, 0)
+                        .map(|d| d.format("%H:%M").to_string())
+                        .unwrap_or_default();
+                    let label = format!("{asset}-{} {hhmm}", iv.label);
                     wanted.push((slug, label, Some(s + iv.secs)));
                 }
             }

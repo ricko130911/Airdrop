@@ -110,7 +110,7 @@ fn draw(f: &mut Frame, dash: &Dash, view: &View) {
         draw_logs(f, logs, &s, view);
     } else {
         let [left, right] =
-            Layout::horizontal([Constraint::Length(42), Constraint::Min(40)]).areas(main);
+            Layout::horizontal([Constraint::Length(46), Constraint::Min(40)]).areas(main);
         let [mlist, metrics] =
             Layout::vertical([Constraint::Length(mlist_h), Constraint::Min(5)]).areas(left);
         let [logs, meta] =
@@ -155,7 +155,7 @@ fn draw_markets(f: &mut Frame, area: Rect, s: &State) {
         lines.push(
             Line::from(vec![
                 Span::styled(format!("[{i:>2}] "), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{:<9}", m.label), Style::default().fg(ACCENT)),
+                Span::styled(format!("{:<13}", m.label), Style::default().fg(ACCENT)),
                 Span::raw(format!(" T-{:<5}", format!("{}s", m.secs_left.max(0)))),
                 Span::raw(format!(
                     "\u{3a3} {:<6}",
@@ -189,13 +189,13 @@ fn draw_metrics(f: &mut Frame, area: Rect, dash: &Dash, s: &State) {
 
     let lines = vec![
         kv("\u{3a3} best asks", f2(sum, 3), if sum.is_some_and(|x| x <= dash.max_pair_cost) { Color::Yellow } else { Color::White }, w),
-        kv("UP best ask", f2(up, 2), Color::Green, w),
-        kv("DOWN best ask", f2(down, 2), Color::Red, w),
+        kv("UP best ask", f2(up, 3), Color::Green, w),
+        kv("DOWN best ask", f2(down, 3), Color::Red, w),
         kv("Edge", edge.map(|e| format!("{e:+.3}")).unwrap_or_else(|| "-".into()),
             if edge.is_some_and(|e| e > 0.0) { Color::Green } else { Color::Yellow }, w),
         kv("Fire threshold \u{3a3} \u{2264}", format!("{:.3}", dash.max_pair_cost), Color::White, w),
         kv("Time left", m.map(|m| fmt_dur(m.secs_left.max(0) as u64)).unwrap_or_else(|| "-".into()), Color::White, w),
-        kv("Taker fee rate", m.map(|m| format!("{}", m.fee_rate)).unwrap_or_else(|| "-".into()), Color::White, w),
+        kv("Taker fee rate", m.map(|m| format!("{} (exp {})", m.fee_rate, m.fee_exp)).unwrap_or_else(|| "-".into()), Color::White, w),
         kv("Position UP/DOWN", m.map(|m| format!("{:.0} / {:.0}", m.shares_up, m.shares_down)).unwrap_or_else(|| "-".into()), Color::White, w),
         kv("Market cost", m.map(|m| format!("${:.2}", m.spent)).unwrap_or_else(|| "-".into()), Color::White, w),
         kv("Locked PnL", format!("{pnl:+.2}"), pnl_c, w),
