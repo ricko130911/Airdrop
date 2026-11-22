@@ -3,7 +3,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
-import { Telegram } from './notify.js';
+import { Telegram, escapeHtml } from './notify.js';
 import { LatencyMonitor } from './latency.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
@@ -142,7 +142,8 @@ async function telegramSetup(cfg) {
     console.log(`\nTambahkan ke .env:\n  TELEGRAM_CHAT_ID=${first}\nLalu jalankan perintah ini lagi untuk mengirim pesan uji.`);
     return;
   }
-  tg.send('✅ <b>Uji notifikasi Unhedged bot berhasil.</b>\nAnda akan menerima kabar setiap tembakan dan hasil round.');
+  const acc = cfg.accountName ? `<b>[${escapeHtml(cfg.accountName)}]</b> ` : '';
+  tg.send(`${acc}✅ <b>Uji notifikasi Unhedged bot berhasil.</b>\nAnda akan menerima kabar setiap tembakan dan hasil round.`);
   await tg.flush(15_000);
   console.log(tg.queue.length ? 'Pesan uji GAGAL terkirim (cek TELEGRAM_CHAT_ID).' : 'Pesan uji terkirim. Cek Telegram Anda.');
 }
