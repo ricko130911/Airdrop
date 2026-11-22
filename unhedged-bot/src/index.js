@@ -239,6 +239,21 @@ function analyze(cfg) {
 
 /** Cek apakah sumber harga resmi tiap aset bisa diakses dari server ini. */
 async function check(api, cfg, log) {
+  // Akun: pastikan API key di file .env ini milik akun yang dimaksud
+  console.log(`\nAkun${cfg.accountName ? ` ${cfg.accountName}` : ''} (${cfg.envFile}) · mode ${cfg.dryRun ? 'SIMULASI (DRY_RUN=true)' : 'LIVE (uang asli)'}`);
+  if (!cfg.apiKey) {
+    console.log('- UNHEDGED_API_KEY kosong');
+  } else {
+    try {
+      const me = await api.me();
+      const bal = await api.balance().catch(() => null);
+      const avail = Number(bal?.balance?.available);
+      console.log(`- Login sebagai: ${me?.username ?? me?.id ?? '?'}${Number.isFinite(avail) ? ` · saldo tersedia $${avail.toFixed(2)}` : ''}`);
+      console.log(`- API key: ${cfg.apiKey.slice(0, 6)}…${cfg.apiKey.slice(-4)}`);
+    } catch (e) {
+      console.log(`- API key TIDAK VALID: ${e.message}`);
+    }
+  }
   const prices = new PriceFeed({ api, logger: log });
   const { accepted } = await discoverMarkets(api, cfg);
   for (const a of accepted) prices.setAssetSource(a.asset, priceSourceOf(a.market, a.asset));
