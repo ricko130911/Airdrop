@@ -105,6 +105,7 @@ function render(st){
     kv('Tick→fill p95', ms(st.fireP95)) +
     kv('Sign latency p50', ms(st.signP50)) +
     kv('CLOB RTT', ms(st.rtt)) +
+    kv('Book process p50/p99', st.procP50 == null ? '-' : `${(st.procP50/1000).toFixed(1)}/${(st.procP99/1000).toFixed(1)} µs`) +
     kv('Book msgs/s', st.msgs) +
     kv('Polymarket balance', st.balance == null ? '-' : '$' + st.balance.toFixed(2), 'g') +
     kv('Capital in use', '$' + st.capital.toFixed(2)) +

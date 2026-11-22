@@ -50,6 +50,8 @@ pub struct State {
     pub halted: Option<String>,
     /// Polymarket cash balance (USDC), refreshed periodically.
     pub balance: Option<f64>,
+    pub proc_p50_ns: Option<u64>,
+    pub proc_p99_ns: Option<u64>,
 }
 
 pub struct Dash {

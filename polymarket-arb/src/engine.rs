@@ -97,6 +97,8 @@ pub struct Engine {
     touched: Vec<usize>,
     /// Set after any trade whose real outcome is unknown/unhedged: no new trades until restart.
     halted: bool,
+    /// Recent per-frame processing times (parse + book update + arb check), ns.
+    proc_ns: std::collections::VecDeque<u64>,
 }
 
 fn now_ms() -> i64 {
@@ -192,6 +194,10 @@ impl Engine {
         }
         self.touched = touched;
         self.touched.clear();
+        if self.proc_ns.len() == 1024 {
+            self.proc_ns.pop_front();
+        }
+        self.proc_ns.push_back(t_recv.elapsed().as_nanos() as u64);
     }
 
     fn touch(&mut self, idx: usize) {
@@ -520,9 +526,13 @@ impl Engine {
         let total = self.dash.msgs.load(std::sync::atomic::Ordering::Relaxed);
         let rate = total - *last_count;
         *last_count = total;
+        let p50 = crate::dash::percentile(&self.proc_ns, 0.5);
+        let p99 = crate::dash::percentile(&self.proc_ns, 0.99);
         self.dash.with(|s| {
             s.markets = views;
             s.msgs_per_sec = rate;
+            s.proc_p50_ns = p50;
+            s.proc_p99_ns = p99;
         });
         self.refresh_totals();
     }
@@ -545,6 +555,7 @@ pub async fn run(
         res_tx,
         touched: Vec::with_capacity(8),
         halted: false,
+        proc_ns: std::collections::VecDeque::with_capacity(1024),
     };
     let mut last_count = 0u64;
 
@@ -624,5 +635,39 @@ mod tests {
         let v: Vec<Msg> = serde_json::from_str(pc).unwrap();
         assert_eq!(v[0].price_changes[0].side, "SELL");
         assert_eq!(v[0].price_changes[0].size, Some("10"));
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::arb::{FeeModel, Limits};
+
+    #[test]
+    #[ignore]
+    fn frame_processing_speed() {
+        let frame = r#"[{"event_type":"price_change","market":"0x5f65","timestamp":"1795351500123",
+          "price_changes":[{"asset_id":"71321045679252212594626385532706912750332728571942532289631379312455583992563",
+          "price":"0.51","size":"736.5","side":"SELL","hash":"9f1c2b","best_bid":"0.50","best_ask":"0.51"},
+          {"asset_id":"52114319501245915516055106046884209969926127482827954674443846427813813222426",
+          "price":"0.50","size":"105","side":"SELL","hash":"a81d3e","best_bid":"0.49","best_ask":"0.50"}]}]"#;
+        let (mut up, mut down) = (AskBook::default(), AskBook::default());
+        for p in 5100..5200 { up.set(p, 50.0); }
+        for p in 5000..5100 { down.set(p, 50.0); }
+        let fee = FeeModel { rate: 0.05, exponent: 1 };
+        let lim = Limits { max_pair_cost: 0.98, max_shares: 10.0, max_usdc: 10.0, min_shares: 5.0, min_leg_usdc: 1.0 };
+        let n = 200_000;
+        let t = Instant::now();
+        for i in 0..n {
+            let v: Vec<Msg> = serde_json::from_str(frame).unwrap();
+            for pc in &v[0].price_changes {
+                let px = parse_px(pc.price).unwrap();
+                let sz: f64 = pc.size.unwrap().parse().unwrap();
+                if i % 2 == 0 { up.set(px, sz) } else { down.set(px, sz) }
+            }
+            std::hint::black_box(arb::find(&up, &down, &fee, &fee, &lim));
+        }
+        let ns = t.elapsed().as_nanos() as f64 / n as f64;
+        println!("parse + book update + arb check: {:.2} us per frame", ns / 1000.0);
     }
 }

@@ -101,7 +101,7 @@ fn draw(f: &mut Frame, dash: &Dash, view: &View) {
         // Narrow screen (e.g. SSH from a phone): stack panels, drop Metadata.
         let [mlist, metrics, logs] = Layout::vertical([
             Constraint::Length(mlist_h),
-            Constraint::Length(24),
+            Constraint::Length(25),
             Constraint::Min(5),
         ])
         .areas(main);
@@ -206,6 +206,10 @@ fn draw_metrics(f: &mut Frame, area: Rect, dash: &Dash, s: &State) {
         kv("Tick\u{2192}fill p95", ms(percentile(&s.fire_lat_us, 0.95)), Color::White, w),
         kv("Sign latency p50", ms(percentile(&s.sign_lat_us, 0.5)), Color::White, w),
         kv("CLOB RTT", ms((s.clob_rtt_us > 0).then_some(s.clob_rtt_us)), Color::White, w),
+        kv("Book process p50/p99", match (s.proc_p50_ns, s.proc_p99_ns) {
+            (Some(a), Some(b)) => format!("{:.1}/{:.1} \u{b5}s", a as f64 / 1000.0, b as f64 / 1000.0),
+            _ => "-".into(),
+        }, Color::White, w),
         kv("Book msgs/s", s.msgs_per_sec.to_string(), Color::White, w),
         kv("Polymarket balance", s.balance.map(|b| format!("${b:.2}")).unwrap_or_else(|| "-".into()), Color::Green, w),
         kv("Capital in use", format!("${:.2}", s.capital_in_use), Color::White, w),

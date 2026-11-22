@@ -124,6 +124,7 @@ async fn state(AxState(app): AxState<App>, headers: HeaderMap) -> Response {
         "ws": s.ws_status,
         "halted": s.halted,
         "balance": s.balance,
+        "procP50": s.proc_p50_ns, "procP99": s.proc_p99_ns,
         "logs": logs,
     });
     drop(s);
