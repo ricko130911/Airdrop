@@ -111,7 +111,7 @@ impl Config {
             .collect::<Result<Vec<_>>>()?;
 
         let cfg = Config {
-            clob_host: var("CLOB_HOST").unwrap_or_else(|| "https://clob-v2.polymarket.com".into()),
+            clob_host: var("CLOB_HOST").unwrap_or_else(|| "https://clob.polymarket.com".into()),
             ws_url: var("WS_URL").unwrap_or_else(|| {
                 "wss://ws-subscriptions-clob.polymarket.com/ws/market".into()
             }),
