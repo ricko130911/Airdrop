@@ -116,6 +116,7 @@ function render(s) {
   btn.dataset.action = s.paused ? 'resume' : 'pause';
   btn.textContent = s.paused ? 'Lanjutkan Trading' : 'Jeda Trading';
 
+  renderLatency(s);
   renderKpis(s);
   renderTickers(s);
   renderMarkets(s);
@@ -125,6 +126,31 @@ function render(s) {
   renderLearning(s);
   renderLogs(s);
   $('#uptime').textContent = 'Uptime ' + duration(s.now - s.startedAt);
+}
+
+/** Bar paling atas: ping VPS -> server Unhedged & waktu respons API. */
+function renderLatency(s) {
+  const p = s.latency?.ping;
+  const a = s.latency?.api;
+  const ms = (x) => (isNum(x) ? (x < 10 ? x.toFixed(1) : Math.round(x)) + ' ms' : '—');
+  let cls = 'warn';
+  let label = 'Mengukur…';
+  if (p && p.samples) {
+    if (!isNum(p.lastMs)) [cls, label] = ['bad', 'Tidak terjangkau'];
+    else if (p.lastMs < 20) [cls, label] = ['ok', 'Sangat cepat'];
+    else if (p.lastMs < 80) [cls, label] = ['ok', 'Normal'];
+    else [cls, label] = ['warn', 'Lambat'];
+  }
+  $('#pingState').className = 'ping-state ' + cls;
+  $('#pingLabel').textContent = label;
+  $('#pingMs').textContent = p && p.samples ? (isNum(p.lastMs) ? ms(p.lastMs) : p.error ?? 'gagal') : '—';
+  const parts = [];
+  if (p && isNum(p.avgMs)) parts.push(`rata-rata ${ms(p.avgMs)}`, `min ${ms(p.minMs)}`, `maks ${ms(p.maxMs)}`);
+  if (p && isNum(p.lossPct) && p.lossPct > 0) parts.push(`gagal ${p.lossPct.toFixed(0)}%`);
+  if (a && isNum(a.avgMs)) parts.push(`respons API ${ms(a.avgMs)}`);
+  if (p?.address) parts.push(p.address);
+  if (p?.at) parts.push(`diukur ${Math.max(0, Math.round((s.now - p.at) / 1000))} dtk lalu`);
+  $('#pingDetail').textContent = parts.join(' · ');
 }
 
 /** Gabungan statistik sniper (tembakan + probe) dari statistik per strategi. */

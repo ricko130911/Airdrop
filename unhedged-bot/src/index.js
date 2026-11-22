@@ -4,6 +4,7 @@ import { createLogger } from './logger.js';
 import { UnhedgedApi } from './api.js';
 import { PriceFeed } from './prices.js';
 import { Telegram } from './notify.js';
+import { LatencyMonitor } from './latency.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
 import { Learner, loadRecords, groupSummary, timeBucket, TIME_BUCKETS } from './analytics.js';
@@ -50,7 +51,9 @@ async function main() {
   const notifier = new Telegram({ token: cfg.telegramBotToken, chatId: cfg.telegramChatId, log });
   if (notifier.enabled) log.info('Notifikasi Telegram aktif');
   else if (cfg.telegramBotToken) log.warn('TELEGRAM_CHAT_ID kosong: jalankan `node src/index.js telegram` untuk mengisinya');
-  const bot = new Bot({ cfg, api, prices, log, notifier });
+  const latency = new LatencyMonitor({ url: cfg.apiBaseUrl, intervalMs: cfg.latencyIntervalMs, log });
+  latency.start();
+  const bot = new Bot({ cfg, api, prices, log, notifier, latency });
 
   let stopping = false;
   const shutdown = async (sig) => {

@@ -202,6 +202,39 @@ export function snipeStake({ prob, cost, bankroll, cfg, allowScale, lockZ = null
   return { usd, kelly, scaled: usd > min + 1e-9, tier: usd > tierUsd + 1e-9 ? 'terbukti' : tier };
 }
 
+/**
+ * Konfirmasi "arah tidak berbalik" untuk taruhan besar.
+ * Jarak aman (z) sisi yang dipilih harus sudah diamati minimal `confirmSec` detik, dan
+ * selama itu tidak menyusut (z terakhir >= z awal x shrinkTol). Bila harga bergerak mendekati
+ * batas menang/kalah, z menyusut -> tidak dikonfirmasi -> taruhan tetap minimum.
+ *
+ * @param {{at:number, z:number|null}[]} hist  riwayat z UP (dicatat setiap evaluasi)
+ * @returns {{confirmed:boolean, zHeld:number|null, heldSec:number, shrinking:boolean}}
+ *   zHeld = z TERENDAH selama jendela konfirmasi (dipakai menentukan tingkat taruhan)
+ */
+export function lockStability(hist, side, { now = Date.now(), confirmSec = 3, shrinkTol = 0.9 } = {}) {
+  const none = { confirmed: false, zHeld: null, heldSec: 0, shrinking: false };
+  if (!hist?.length) return none;
+  const from = now - confirmSec * 1000;
+  // Titik awal = sampel terakhir yang umurnya >= confirmSec
+  let start = -1;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    if (hist[i].at <= from) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return { ...none, heldSec: (now - hist[0].at) / 1000 };
+  const zs = hist.slice(start).map((x) => (x.z === null || x.z === undefined ? null : side === 'up' ? x.z : -x.z));
+  const heldSec = (now - hist[start].at) / 1000;
+  if (zs.some((z) => z === null || Number.isNaN(z))) return { ...none, heldSec };
+  const zHeld = Math.min(...zs);
+  const first = zs[0];
+  const last = zs.at(-1);
+  const shrinking = first > 0 && last < first * shrinkTol;
+  return { confirmed: !shrinking, zHeld, heldSec, shrinking };
+}
+
 export const SNIPE_REASON_LABEL = {
   no_prob: 'peluang tak tersedia',
   unsure: 'belum pasti',

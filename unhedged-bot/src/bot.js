@@ -1,6 +1,6 @@
 import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf, durationLabel } from './markets.js';
 import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, twapZ, brier } from './model.js';
-import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan } from './strategy.js';
+import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan, lockStability } from './strategy.js';
 import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
 import path from 'node:path';
 import { escapeHtml as h } from './notify.js';
@@ -14,8 +14,9 @@ export class Bot {
   /**
    * @param {{cfg:any, api: import('./api.js').UnhedgedApi, prices: import('./prices.js').PriceFeed, log:any}} deps
    */
-  constructor({ cfg, api, prices, log, notifier = null }) {
+  constructor({ cfg, api, prices, log, notifier = null, latency = null }) {
     this.tg = notifier; // notifikasi Telegram (opsional)
+    this.latency = latency; // pengukur ping VPS -> Unhedged (opsional)
     this.lastErrorNotify = 0;
     this.remNotifiedDay = null;
     this.cfg = cfg;
@@ -129,14 +130,17 @@ export class Bot {
     const leftOf = (e) => (e.window.endMs - Date.now()) / 1000;
     const byEnd = () => [...this.markets.values()].sort((a, b) => a.window.endMs - b.window.endMs);
     // Mode cepat (poll ~1 detik) selama ada market di/menjelang jendela tembak sniper
-    this.fastMode = this.cfg.strategy === 'sniper' && byEnd().some((e) => leftOf(e) <= startAt + 3 && leftOf(e) > stopAt - 1);
+    const watchAt = startAt + this.warmupSec();
+    this.fastMode = this.cfg.strategy === 'sniper' && byEnd().some((e) => leftOf(e) <= watchAt + 3 && leftOf(e) > stopAt - 1);
 
     // 1) PRIORITAS: market di jendela trading diproses lebih dulu, sebelum pekerjaan lain
     //    (discovery, harga dashboard, settle) supaya tembakan tidak terlambat.
     if (this.live) await this.syncOrders();
     for (const entry of byEnd()) {
       const secondsLeft = leftOf(entry);
-      if (secondsLeft <= stopAt || secondsLeft > startAt) continue;
+      // Beberapa detik sebelum jendela tembak market sudah diamati (tanpa menembak) agar
+      // konfirmasi "arah tidak berbalik" sudah siap saat jendela dibuka.
+      if (secondsLeft <= stopAt || secondsLeft > watchAt) continue;
       if (Date.now() < entry.window.startMs) continue;
       if (this.foreignMarkets.has(entry.market.id)) continue;
       try {
@@ -830,6 +834,12 @@ export class Bot {
     return `${entry.asset}${entry.durationSec && entry.durationSec !== 300 ? ' ' + durationLabel(entry.durationSec) : ''}`;
   }
 
+  /** Detik pengamatan sebelum jendela tembak (untuk konfirmasi taruhan besar). */
+  warmupSec() {
+    const c = this.cfg;
+    return c.strategy === 'sniper' && c.snipeLockConfirmSec > 0 ? c.snipeLockConfirmSec + 2 : 0;
+  }
+
   /** Jendela trading efektif (detik tersisa) sesuai strategi. */
   tradeWindow() {
     return this.cfg.strategy === 'sniper'
@@ -870,6 +880,14 @@ export class Bot {
       await this.cancelOrder(entry, 'tembakan tidak terisi, tidak dikejar');
       return;
     }
+    // Riwayat jarak aman (z UP) untuk konfirmasi "arah tidak berbalik"
+    const nowMs = Date.now();
+    entry.zHist = (entry.zHist ?? []).filter((x) => nowMs - x.at < 30_000);
+    entry.zHist.push({ at: nowMs, z: typeof est.zUp === 'number' && !Number.isNaN(est.zUp) ? est.zUp : null });
+    if (secondsLeft > this.cfg.snipeMaxSec) {
+      entry.lastDecision = `mengamati arah harga (jendela tembak mulai sisa ${this.cfg.snipeMaxSec} dtk)`;
+      return;
+    }
     if (Date.now() < this.tradingPausedUntil) {
       entry.lastDecision = `trading Unhedged dijeda (maintenance), coba lagi ${Math.ceil((this.tradingPausedUntil - Date.now()) / 1000)} dtk lagi`;
       return;
@@ -902,6 +920,10 @@ export class Bot {
     const allowScale = trust.trusted && today.snipeLosses === 0;
     // Jarak aman untuk sisi yang dipilih (z UP dibalik untuk sisi DOWN)
     const lockZ = est.zUp === null || est.zUp === undefined ? null : side === 'up' ? est.zUp : -est.zUp;
+    // Taruhan besar hanya bila jarak aman bertahan & tidak menyusut (harga tidak berbalik arah)
+    const confirmSec = this.cfg.snipeLockConfirmSec ?? 0;
+    const stab = confirmSec > 0 ? lockStability(entry.zHist, side, { confirmSec }) : null;
+    const sizeZ = stab ? (stab.confirmed ? stab.zHeld : null) : lockZ;
     const d = decideSnipe({
       prob,
       side,
@@ -911,13 +933,17 @@ export class Bot {
       exposureLeftUsd,
       bankroll: this.bankroll ?? 0,
       allowScale,
-      lockZ,
+      lockZ: sizeZ,
       allowBoost: today.snipeLosses === 0,
     });
     let sizeNote = '';
     if (d.action === 'buy') {
-      const zTxt = lockZ === null ? '' : lockZ === Infinity ? ', hasil sudah pasti' : `, jarak aman ${lockZ.toFixed(1)}σ`;
-      if (d.sizing.scaled) sizeNote = ` · taruhan ${d.sizing.tier} $${d.stakeUsd.toFixed(2)} (yakin ${(prob * 100).toFixed(2)}%${zTxt})`;
+      const zShow = sizeZ ?? lockZ;
+      const zTxt = zShow === null ? '' : zShow === Infinity ? ', hasil sudah pasti' : `, jarak aman ${zShow.toFixed(1)}σ`;
+      const nearLock = lockZ !== null && lockZ >= (this.cfg.snipeLockZ ?? 5) - 1;
+      if (!d.sizing.scaled && stab && nearLock && !stab.confirmed)
+        sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (${stab.shrinking ? 'jarak aman menyusut, harga mendekati batas' : `belum ${confirmSec} dtk stabil`})`;
+      else if (d.sizing.scaled) sizeNote = ` · taruhan ${d.sizing.tier} $${d.stakeUsd.toFixed(2)} (yakin ${(prob * 100).toFixed(2)}%${zTxt})`;
       else if (!trust.trusted) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (belum terbukti: ${trust.reason})`;
       else if (today.snipeLosses) sizeNote = ` · taruhan minimum $${d.stakeUsd.toFixed(2)} (sudah kalah hari ini)`;
       else sizeNote = ` · taruhan $${d.stakeUsd.toFixed(2)}`;
@@ -1102,6 +1128,7 @@ export class Bot {
                 maxUsd: c.snipeMaxUsd,
                 lockedUsd: c.snipeLockedUsd,
                 lockZ: c.snipeLockZ,
+                lockConfirmSec: c.snipeLockConfirmSec,
                 maxLossesPerDay: c.snipeMaxLossesPerDay,
                 dailyTarget: c.dailyProfitTargetUsd,
                 feeModel: c.feeModel,
@@ -1130,6 +1157,10 @@ export class Bot {
         pnl: s.paperPnl,
         today: this.todayStats(),
         byStrategy: this.stratStats,
+      },
+      latency: {
+        ping: this.latency?.snapshot?.() ?? null,
+        api: this.api?.timing ?? null,
       },
       markets,
       prices,

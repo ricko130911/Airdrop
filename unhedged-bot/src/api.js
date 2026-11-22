@@ -19,6 +19,16 @@ export class UnhedgedApi {
     this.log = logger;
     this.authCalls = []; // timestamp panggilan ber-auth, untuk menjaga batas 60 req/menit
     this.publicCalls = []; // timestamp panggilan publik, batas resmi 600 req/menit
+    this.timing = { lastMs: null, avgMs: null, n: 0, at: null }; // waktu respons API (untuk dashboard)
+  }
+
+  /** Catat lama satu request (ms) sebagai rata-rata bergerak. */
+  recordTiming(ms) {
+    const t = this.timing;
+    t.lastMs = ms;
+    t.avgMs = t.avgMs === null ? ms : t.avgMs * 0.8 + ms * 0.2;
+    t.n++;
+    t.at = Date.now();
   }
 
   async throttleAuth() {
@@ -71,6 +81,7 @@ export class UnhedgedApi {
       if (throttle) await this.throttleAuth();
       else if (!auth) await this.throttlePublic();
       try {
+        const t0 = performance.now();
         const res = await fetch(url, {
           method,
           headers,
@@ -78,6 +89,7 @@ export class UnhedgedApi {
           signal: AbortSignal.timeout(this.timeoutMs),
         });
         const text = await res.text();
+        this.recordTiming(performance.now() - t0);
         let data;
         try {
           data = text ? JSON.parse(text) : null;

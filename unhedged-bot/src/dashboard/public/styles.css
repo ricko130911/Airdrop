@@ -57,6 +57,29 @@ body {
   z-index: 0;
 }
 
+/* ---------- Ping bar (paling atas) ---------- */
+.pingbar {
+  position: relative;
+  z-index: 11;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 8px clamp(16px, 4vw, 40px);
+  padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.ping-state { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-primary); }
+.ping-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.ping-state.ok .dot { background: var(--good); box-shadow: 0 0 0 4px rgba(12, 163, 12, 0.18); }
+.ping-state.warn .dot { background: var(--warning); }
+.ping-state.bad .dot { background: var(--critical); }
+.ping-main b { color: var(--gold-1); font-size: 16px; font-weight: 600; margin-left: 4px; }
+.ping-detail { color: var(--text-muted); }
+
 /* ---------- Topbar ---------- */
 .topbar {
   position: sticky;

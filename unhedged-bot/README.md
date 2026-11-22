@@ -362,6 +362,8 @@ optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 | `SNIPE_TRUST_TRADES` | `30` | Minimal trade sniper sebelum taruhan boleh naik |
 | `SNIPE_LOCK_Z` | `5` | Hasil dianggap "terkunci" bila harga harus bergerak ≥ sekian standar deviasi agar berbalik |
 | `SNIPE_LOCKED_USD` | `6` | Taruhan saat hasil terkunci (berlaku walau sniper belum terbukti; setengah jalan di LOCK_Z − 1) |
+| `SNIPE_LOCK_CONFIRM_SEC` | `3` | Taruhan terkunci hanya bila jarak aman bertahan & tidak menyusut selama sekian detik (harga tidak berbalik). 0 = mati |
+| `LATENCY_INTERVAL_MS` | `15000` | Seberapa sering ping VPS → Unhedged diukur (tampil di bar paling atas dashboard) |
 | `SNIPE_MAX_LOSSES_PER_DAY` | `2` | Rem: berhenti sampai besok setelah kalah sebanyak ini |
 | `DAILY_PROFIT_TARGET_USD` | `0` | Berhenti setelah untung harian mencapai angka ini (0 = tanpa target) |
 | `FEE_MODEL` | `official` | `official` = rumus resmi Unhedged: harga × (1−harga) × koefisien. `flat`/`risk` = perkiraan lama |

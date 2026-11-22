@@ -81,6 +81,8 @@ export function loadConfig() {
     // Taruhan lebih besar saat hasil round "terkunci" (jarak aman >= SNIPE_LOCK_Z standar deviasi)
     snipeLockZ: num('SNIPE_LOCK_Z', 5),
     snipeLockedUsd: num('SNIPE_LOCKED_USD', 6),
+    // Taruhan besar hanya bila jarak aman bertahan & tidak menyusut selama N detik terakhir (0 = mati)
+    snipeLockConfirmSec: num('SNIPE_LOCK_CONFIRM_SEC', 3),
     snipePollMs: num('SNIPE_POLL_MS', 1000),
     snipeMaxLossesPerDay: num('SNIPE_MAX_LOSSES_PER_DAY', 2),
     dailyProfitTargetUsd: num('DAILY_PROFIT_TARGET_USD', 0),
@@ -116,6 +118,9 @@ export function loadConfig() {
     telegramChatId: str('TELEGRAM_CHAT_ID'),
     telegramNotifyDry: bool('TELEGRAM_NOTIFY_DRY', false),
 
+    // Pengukur ping VPS -> server Unhedged (ms), tampil di bagian atas dashboard
+    latencyIntervalMs: num('LATENCY_INTERVAL_MS', 15_000),
+
     dashboardEnabled: bool('DASHBOARD_ENABLED', true),
     dashboardHost: str('DASHBOARD_HOST', '0.0.0.0'),
     dashboardPort: num('DASHBOARD_PORT', 3005),
@@ -146,6 +151,7 @@ function validate(cfg) {
   if (!(cfg.snipeMaxPrice > 0 && cfg.snipeMaxPrice < 1)) errs.push('SNIPE_MAX_PRICE harus di antara 0 dan 1');
   if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
   if (cfg.snipeMaxUsd < cfg.snipeUsd) errs.push('SNIPE_MAX_USD harus >= SNIPE_USD');
+  if (cfg.snipeLockConfirmSec < 0 || cfg.snipeLockConfirmSec > 20) errs.push('SNIPE_LOCK_CONFIRM_SEC harus di antara 0 dan 20');
   if (!(cfg.snipeKellyFraction > 0 && cfg.snipeKellyFraction <= 0.5)) errs.push('SNIPE_KELLY_FRACTION harus di (0, 0.5]');
   if (errs.length) throw new Error('Konfigurasi tidak valid:\n - ' + errs.join('\n - '));
 }

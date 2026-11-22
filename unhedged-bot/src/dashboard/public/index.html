@@ -14,6 +14,12 @@
 <body>
   <div class="ambient" aria-hidden="true"></div>
 
+  <div class="pingbar" id="pingbar" role="status" aria-live="polite">
+    <span class="ping-state" id="pingState"><span class="dot"></span><span id="pingLabel">Mengukur…</span></span>
+    <span class="ping-main">Ping VPS → Unhedged <b id="pingMs">—</b></span>
+    <span class="ping-detail" id="pingDetail"></span>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <div class="monogram" aria-hidden="true">U</div>
