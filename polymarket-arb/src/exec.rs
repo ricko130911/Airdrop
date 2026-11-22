@@ -406,6 +406,7 @@ impl Executor {
             .await?;
         let status = resp.status();
         let text = resp.text().await?;
+        info!(http = %status, body = %text, "POST /orders response");
         if !status.is_success() {
             bail!("POST /orders {status}: {text}");
         }
@@ -422,7 +423,7 @@ impl Executor {
         limit_px: u32,
         size: f64,
     ) -> Option<LegFill> {
-        let f = self.leg_fill_raw(r, side, limit_px).await?;
+        let f = self.leg_fill_raw(r, side, limit_px, size).await?;
         let ok = |x: f64| x <= size * 1.001 + 0.01;
         if ok(f.shares) {
             return Some(f);
@@ -436,8 +437,19 @@ impl Executor {
         None
     }
 
-    async fn leg_fill_raw(&self, r: &PostOrderResponse, side: Side, limit_px: u32) -> Option<LegFill> {
+    /// Pessimistic: anything that might have traded but can't be measured returns `None`.
+    async fn leg_fill_raw(
+        &self,
+        r: &PostOrderResponse,
+        side: Side,
+        limit_px: u32,
+        size: f64,
+    ) -> Option<LegFill> {
         if !r.success {
+            if !r.trade_ids.is_empty() || !r.transaction_hashes.is_empty() {
+                error!(order = %r.order_id, "order reported failed but has trades: state unknown");
+                return None;
+            }
             return Some(LegFill::default());
         }
         let from_resp = |r: &PostOrderResponse| {
@@ -455,7 +467,21 @@ impl Executor {
             }
         };
         match &r.status {
-            OrderStatusType::Matched => Some(from_resp(r)),
+            OrderStatusType::Matched => {
+                let f = from_resp(r);
+                if f.shares > 0.0 {
+                    Some(f)
+                } else if matches!(side, Side::Buy) && size > 0.0 {
+                    // "matched" without amounts. Our pair legs are FOK (all-or-nothing), so a
+                    // match means the full size filled; for FAK callers this is re-checked by
+                    // the size sanity check / balance cross-check.
+                    warn!(order = %r.order_id, "matched without amounts: assuming full fill of {size}");
+                    Some(LegFill { shares: size, usdc: size * px_to_f64(limit_px) })
+                } else {
+                    error!(order = %r.order_id, "matched without amounts: state unknown");
+                    None
+                }
+            }
             OrderStatusType::Delayed | OrderStatusType::Live => {
                 // Poll the order until the matching engine settles it (max ~3s).
                 for _ in 0..30 {
@@ -477,7 +503,17 @@ impl Executor {
                 error!(order = %r.order_id, "order still pending after 3s: fill state unknown");
                 None
             }
-            _ => Some(LegFill::default()),
+            OrderStatusType::Unmatched | OrderStatusType::Canceled => {
+                if !r.trade_ids.is_empty() {
+                    error!(order = %r.order_id, "unmatched but has trades: state unknown");
+                    return None;
+                }
+                Some(LegFill::default())
+            }
+            other => {
+                error!(order = %r.order_id, status = ?other, "unknown order status: state unknown");
+                None
+            }
         }
     }
 
@@ -517,6 +553,8 @@ impl Executor {
             );
             return out;
         }
+
+        let balance_before = self.dash.with(|s| s.balance);
 
         // Sign both legs in parallel (pure CPU, ~100us each).
         let (a, b) = tokio::join!(
@@ -597,7 +635,37 @@ impl Executor {
         out.down = down;
         self.fix_imbalance(&job, &mut out).await;
         out.usdc_spent = out.up.usdc + out.down.usdc;
+        self.cross_check_balance(&job, &mut out, balance_before).await;
         out
+    }
+
+    /// Independent safety net: compare the real balance change with what we recorded.
+    async fn cross_check_balance(&self, job: &PairJob, out: &mut PairResult, before: Option<f64>) {
+        let Some(before) = before else { return };
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let after = match fetch_balance(&self.client).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("post-trade balance check failed: {e}");
+                return;
+            }
+        };
+        self.dash.with(|s| s.balance = Some(after));
+        let fee = |f: &LegFill, m: &crate::arb::FeeModel| {
+            if f.shares > 0.0 { f.shares * m.per_share(f.usdc / f.shares) } else { 0.0 }
+        };
+        let recorded = out.up.usdc + out.down.usdc + fee(&out.up, &job.fee_up) + fee(&out.down, &job.fee_down);
+        let actual = before - after;
+        info!(market = %job.label, before, after, actual, recorded, "post-trade balance check");
+        if actual - recorded > 0.5 {
+            let msg = format!(
+                "balance dropped ${actual:.2} but the bot recorded ${recorded:.2}: an order may have filled unseen"
+            );
+            error!(market = %job.label, "{msg}");
+            if out.uncertain.is_none() {
+                out.uncertain = Some(msg);
+            }
+        }
     }
 
     /// If one leg filled more than the other, complete the short leg (if still profitable /
