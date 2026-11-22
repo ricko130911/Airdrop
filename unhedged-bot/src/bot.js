@@ -434,7 +434,9 @@ export class Bot {
       return;
     }
 
-    const exposureLeftUsd = this.cfg.maxOpenExposureUsd - this.exposureUsd() + (entry.order ? entry.order.price * entry.order.quantity : 0);
+    let exposureLeftUsd = this.cfg.maxOpenExposureUsd - this.exposureUsd() + (entry.order ? entry.order.price * entry.order.quantity : 0);
+    // Live: jangan pernah memesan melebihi saldo tersedia (sisakan 2% untuk fee & pembulatan)
+    if (this.live && Number.isFinite(this.account.available)) exposureLeftUsd = Math.min(exposureLeftUsd, this.account.available * 0.98);
     const bankroll = this.bankroll ?? 0;
     const twapInfo = est.knownCount ? ` twap60=${fmt(est.knownAvg, 4)}(${est.knownCount}s)` : '';
     const calInfo = Math.abs(est.pUp - pUpRaw) > 0.005 ? ` (mentah ${fmt(pUpRaw)})` : '';
@@ -540,6 +542,8 @@ export class Bot {
       const px = d.fillsNow ? d.ask : d.price;
       entry.paper = { side: d.side, price: px, quantity: d.quantity, fee: feeFor(px, entry.feeRate ?? 0, this.cfg.feeModel) * d.quantity, probe: !!d.probe, strategy: d.strategy ?? 'model' };
       if (d.fillsNow) entry.paper.fill = this.fillInfo(entry, d.side, px);
+      // Kurangi saldo lokal segera (saldo asli disegarkan tiap 30 dtk) agar tembakan bersamaan tidak melebihi saldo
+      if (Number.isFinite(this.account.available)) this.account.available = Math.max(0, this.account.available - d.quantity * px - entry.paper.fee);
       this.log.info(`${tag} order #${o.id} status=${o.status}`);
       this.notifyShot(entry, d, px, o.status);
     } catch (e) {
