@@ -4,6 +4,7 @@
 //!   polymarket-arb            # TUI dashboard (default), reads config from env / .env
 //!   polymarket-arb --no-tui   # plain logs to stdout (for systemd / tmux / docker)
 //!   polymarket-arb --demo     # dashboard with a simulated feed, no wallet needed
+//!   polymarket-arb --check    # show the balance seen by each SIGNATURE_TYPE, then exit
 //!
 //! Web dashboard: http://<vps-ip>:WEB_PORT (needs WEB_PASSWORD, see .env.example)
 
@@ -43,7 +44,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |f: &str| args.iter().any(|a| a == f);
     let demo = has("--demo");
-    let tui = !has("--no-tui");
+    let tui = !has("--no-tui") && !has("--check");
 
     // With the TUI on, logs go to a file so they don't corrupt the screen.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -77,6 +78,9 @@ fn main() -> Result<()> {
             return Ok(());
         }
         let cfg = config::Config::from_env()?;
+        if has("--check") {
+            return exec::check_wallets(&cfg).await;
+        }
         let watching = format!(
             "{} \u{b7} {}",
             cfg.assets.join(","),

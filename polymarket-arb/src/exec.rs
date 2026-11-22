@@ -138,6 +138,64 @@ async fn check_funds(client: &AuthClient, cfg: &Config) -> Result<()> {
     Ok(())
 }
 
+/// `--check`: log in once per signature type and print the balance each one sees, so the
+/// user can tell which SIGNATURE_TYPE holds their funds. Places no orders.
+pub async fn check_wallets(cfg: &Config) -> Result<()> {
+    use polymarket_client_sdk_v2::clob::types::request::BalanceAllowanceRequest;
+    let signer = PrivateKeySigner::from_str(&cfg.private_key)
+        .context("POLYMARKET_PRIVATE_KEY is not a valid hex private key")?
+        .with_chain_id(Some(POLYGON));
+    println!("signer (EOA) address: {}", signer.address());
+    println!("FUNDER_ADDRESS in .env: {}", cfg.funder.as_deref().unwrap_or("(not set)"));
+    println!("current SIGNATURE_TYPE in .env: {}\n", cfg.signature_type);
+    let mut best: Option<(u8, f64)> = None;
+    for t in 0u8..=3 {
+        let name = ["EOA", "Proxy (email/Magic)", "Gnosis Safe (browser wallet)", "Deposit wallet (Poly1271)"][t as usize];
+        let mut auth = Client::new(&cfg.clob_host, ClobConfig::default())?
+            .authentication_builder(&signer)
+            .signature_type(sig_type(t));
+        if t == 3 {
+            match &cfg.funder {
+                Some(f) => auth = auth.funder(Address::from_str(f).context("bad FUNDER_ADDRESS")?),
+                None => {
+                    println!("SIGNATURE_TYPE={t} {name:<30} skipped (needs FUNDER_ADDRESS)");
+                    continue;
+                }
+            }
+        }
+        let res = async {
+            let client = auth.authenticate().await?;
+            let b = client
+                .balance_allowance(BalanceAllowanceRequest::builder().asset_type(Default::default()).build())
+                .await?;
+            Ok::<_, anyhow::Error>(b)
+        }
+        .await;
+        match res {
+            Ok(b) => {
+                let usdc = if b.balance.scale() == 0 { to_f64(b.balance) / 1_000_000.0 } else { to_f64(b.balance) };
+                let approved = b.allowances.values().any(|v| !v.trim().trim_start_matches('0').is_empty());
+                println!(
+                    "SIGNATURE_TYPE={t} {name:<30} balance ${usdc:>10.2}   allowance {}",
+                    if approved { "OK" } else { "not set" }
+                );
+                if usdc > best.map_or(0.0, |b| b.1) {
+                    best = Some((t, usdc));
+                }
+            }
+            Err(e) => println!("SIGNATURE_TYPE={t} {name:<30} error: {e:#}"),
+        }
+    }
+    match best {
+        Some((t, usdc)) => println!("\n=> Your funds (${usdc:.2}) are under SIGNATURE_TYPE={t}. Put that in .env."),
+        None => println!(
+            "\n=> No balance found under any type. Check that this private key belongs to the \
+             Polymarket account that holds the money, and that the deposit has arrived."
+        ),
+    }
+    Ok(())
+}
+
 fn dec_px(px: u32) -> Decimal {
     // pips (1e-4) -> Decimal with 4dp, then normalize to drop trailing zeros
     Decimal::new(i64::from(px), 4).normalize()
