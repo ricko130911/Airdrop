@@ -56,6 +56,8 @@ pub struct Config {
     /// (incl. fees) stays <= this. 1.00 = break-even.
     pub recovery_max_pair_cost: f64,
     pub recovery_attempts: u32,
+    /// How many times to retry selling back a one-sided fill (shares may need to settle).
+    pub unwind_attempts: u32,
     /// If the missing leg cannot be completed, sell the filled leg back, accepting at most this
     /// loss per share.
     pub unwind_max_loss_per_share: f64,
@@ -137,7 +139,8 @@ impl Config {
             cooldown_ms: parse("COOLDOWN_MS", 250)?,
 
             recovery_max_pair_cost: parse("RECOVERY_MAX_PAIR_COST", 1.0)?,
-            recovery_attempts: parse("RECOVERY_ATTEMPTS", 3)?,
+            recovery_attempts: parse("RECOVERY_ATTEMPTS", 0)?,
+            unwind_attempts: parse("UNWIND_ATTEMPTS", 8)?,
             unwind_max_loss_per_share: parse("UNWIND_MAX_LOSS_PER_SHARE", 0.10)?,
 
             dry_run: parse("DRY_RUN", true)?,

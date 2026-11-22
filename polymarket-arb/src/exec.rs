@@ -747,39 +747,83 @@ impl Executor {
         // 2) Still unbalanced: sell the excess of the long leg back.
         let floor = (long_avg - self.cfg.unwind_max_loss_per_share).max(px_to_f64(tick));
         let floor_px = ((floor * f64::from(SCALE)).ceil() as u32).div_ceil(tick) * tick;
-        let sell_size = (remaining * 100.0 + 1e-9).floor() / 100.0;
-        let res = async {
-            let o = self
-                .sign(long_token, floor_px, sell_size, Side::Sell, OrderType::FAK)
-                .await?;
-            let r = self.post(&[o]).await?;
-            let r = r.into_iter().next().ok_or_else(|| anyhow!("empty response"))?;
-            self.leg_fill(&r, Side::Sell, floor_px, sell_size)
-                .await
-                .ok_or_else(|| anyhow!("unwind order pending, state unknown"))
-        }
-        .await;
-        match res {
-            Ok(f) if f.shares > 0.0 => {
-                let tgt = if long_is_up { &mut out.up } else { &mut out.down };
-                tgt.shares -= f.shares;
-                tgt.usdc -= f.usdc;
-                let left = remaining - f.shares;
-                if left >= 1.0 {
-                    error!(market = %job.label, left, "ALERT: unhedged shares remain (directional exposure)");
-                    out.uncertain = Some(format!("{left:.2} unhedged shares remain"));
-                } else {
-                    info!(market = %job.label, sold = f.shares, "excess leg unwound");
+        self.dash.log(
+            &job.label,
+            vec![
+                tag("risk", Color::Magenta),
+                col(format!("selling back {remaining:.2} sh (min price {:.3})", px_to_f64(floor_px)), Color::Magenta),
+            ],
+        );
+        let mut sold_total = 0.0;
+        let mut last_err = String::new();
+        let mut shrink = 1.0_f64;
+        // Freshly bought shares can take a few seconds to settle before they can be sold,
+        // so retry the sell for a while instead of giving up after one attempt.
+        for attempt in 1..=self.cfg.unwind_attempts.max(1) {
+            let left = remaining - sold_total;
+            let sell_size = (left * shrink * 100.0 + 1e-9).floor() / 100.0;
+            if left < 1.0 || sell_size < job.min_shares.max(1.0) {
+                break;
+            }
+            let res = async {
+                let o = self
+                    .sign(long_token, floor_px, sell_size, Side::Sell, OrderType::FAK)
+                    .await?;
+                let r = self.post(&[o]).await?;
+                let r = r.into_iter().next().ok_or_else(|| anyhow!("empty response"))?;
+                if !r.success {
+                    if let Some(m) = &r.error_msg {
+                        return Err(anyhow!("rejected: {m}"));
+                    }
+                }
+                self.leg_fill(&r, Side::Sell, floor_px, sell_size)
+                    .await
+                    .ok_or_else(|| anyhow!("unwind order pending, state unknown"))
+            }
+            .await;
+            match res {
+                Ok(f) => {
+                    if f.shares > 0.0 {
+                        sold_total += f.shares;
+                        let tgt = if long_is_up { &mut out.up } else { &mut out.down };
+                        tgt.shares -= f.shares;
+                        tgt.usdc -= f.usdc;
+                        info!(market = %job.label, attempt, sold = f.shares, "unwind sell filled");
+                    }
+                }
+                Err(e) => {
+                    last_err = format!("{e:#}");
+                    warn!(market = %job.label, attempt, "unwind sell failed: {last_err}");
+                    if last_err.contains("state unknown") {
+                        out.uncertain = Some(format!("unwind state unknown: {last_err}"));
+                        return;
+                    }
+                    if last_err.to_ascii_lowercase().contains("balance") && attempt >= 3 {
+                        // Still not enough shares after settling time: fees may have been
+                        // taken in shares, so try slightly less.
+                        shrink = (shrink - 0.01).max(0.95);
+                    }
                 }
             }
-            Ok(_) => {
-                error!(market = %job.label, remaining, "ALERT: could not unwind; unhedged shares remain");
-                out.uncertain = Some(format!("could not unwind {remaining:.2} unhedged shares"));
+            if remaining - sold_total >= 1.0 {
+                tokio::time::sleep(Duration::from_millis(750)).await;
             }
-            Err(e) => {
-                error!(market = %job.label, remaining, "ALERT: unwind failed: {e:#}");
-                out.uncertain = Some(format!("unwind failed: {e}"));
-            }
+        }
+
+        let left = remaining - sold_total;
+        if left < 1.0 {
+            info!(market = %job.label, sold = sold_total, "one-sided position closed");
+            self.dash.log(
+                &job.label,
+                vec![
+                    tag("risk", Color::Green),
+                    col(format!("one-sided position closed: sold {sold_total:.2} sh back"), Color::Green),
+                ],
+            );
+        } else {
+            let msg = format!("could not sell back {left:.2} unhedged shares {last_err}");
+            error!(market = %job.label, "ALERT: {msg}");
+            out.uncertain = Some(msg);
         }
     }
 }
