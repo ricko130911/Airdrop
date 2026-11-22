@@ -333,6 +333,31 @@ npm install -g pm2
 Android bisa mematikan Termux di background. Aktifkan `termux-wake-lock` dan matikan
 optimasi baterai untuk Termux. VPS tetap lebih stabil untuk bot 24 jam.
 
+## Beberapa akun
+
+Satu proses bot per akun, masing-masing dengan file `.env` sendiri:
+
+| File | Proses PM2 | Log | Contoh port dashboard |
+|---|---|---|---|
+| `.env` | `unhedged-bot` | `logs/` | 3005 |
+| `.env.akun2` | `unhedged-bot-akun2` | `logs-akun2/` | 3006 |
+| `.env.<nama>` | `unhedged-bot-<nama>` | `logs-<nama>/` | 3007, … |
+
+```bash
+cp .env .env.akun2
+nano .env.akun2            # ganti UNHEDGED_API_KEY dan DASHBOARD_PORT=3006
+ENV_FILE=.env.akun2 node src/index.js check     # cek akun kedua
+pm2 start ecosystem.config.cjs && pm2 restart ecosystem.config.cjs --update-env && pm2 save
+```
+
+- Tiap akun punya saldo, rem harian, statistik, dan dashboard sendiri. Pesan Telegram diberi label `[akun2]`.
+- Batas request publik Unhedged (600/menit) berlaku **per IP**, jadi `ecosystem.config.cjs` membagi
+  jatahnya otomatis (`PUBLIC_RPS`): 1 akun = 9/dtk, 2 akun = 4/dtk, 3 akun = 3/dtk.
+- Semua akun menembak market yang sama dan berebut penjual yang sama: akun kedua biasanya hanya
+  mendapat sisa kontrak yang tidak diambil akun pertama.
+- Laporan per akun: `ENV_FILE=.env.akun2 node src/index.js analyze --live`.
+- Pastikan penggunaan beberapa akun sesuai aturan Unhedged; itu tanggung jawab pemilik akun.
+
 ## Pengaturan penting (`.env`)
 
 | Variabel | Default | Arti |

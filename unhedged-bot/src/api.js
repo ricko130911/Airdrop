@@ -12,7 +12,8 @@ export class ApiError extends Error {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class UnhedgedApi {
-  constructor({ baseUrl = 'https://api.unhedged.gg', apiKey = '', timeoutMs = 10000, logger } = {}) {
+  constructor({ baseUrl = 'https://api.unhedged.gg', apiKey = '', timeoutMs = 10000, logger, publicRps = 8 } = {}) {
+    this.publicRps = publicRps;
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.timeoutMs = timeoutMs;
@@ -45,7 +46,7 @@ export class UnhedgedApi {
 
   async throttlePublic() {
     // Batas resmi 600 req/menit per IP; jaga di 8 req/detik (480/menit) agar aman
-    const LIMIT = 8;
+    const LIMIT = this.publicRps ?? 8;
     for (;;) {
       const now = Date.now();
       this.publicCalls = this.publicCalls.filter((t) => now - t < 1000);

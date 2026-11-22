@@ -116,6 +116,8 @@ function render(s) {
   btn.dataset.action = s.paused ? 'resume' : 'pause';
   btn.textContent = s.paused ? 'Lanjutkan Trading' : 'Jeda Trading';
 
+  $('#brandSub').textContent = s.accountName ? `Akun ${s.accountName} · Up/Down Sniper` : 'Private Trading · Up/Down Sniper';
+  document.title = s.accountName ? `Unhedged · ${s.accountName}` : 'Unhedged · Private Trading Desk';
   renderLatency(s);
   renderKpis(s);
   renderTickers(s);

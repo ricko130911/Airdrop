@@ -33,7 +33,8 @@ async function main() {
 
   const cfg = loadConfig();
   const log = createLogger({ level: cfg.logLevel, dir: cfg.logDir });
-  const api = new UnhedgedApi({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey, logger: log });
+  const api = new UnhedgedApi({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey, logger: log, publicRps: cfg.publicRps });
+  if (cfg.accountName) log.info(`Akun: ${cfg.accountName} (${cfg.envFile}) · log di ${cfg.logDir}`);
 
   if (cmd === 'discover') return discover(api, cfg);
   if (cmd === 'check') return check(api, cfg, log);

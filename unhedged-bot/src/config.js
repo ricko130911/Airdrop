@@ -32,9 +32,30 @@ function str(name, def = '') {
   return raw === undefined || raw === '' ? def : raw;
 }
 
+/**
+ * File .env yang dipakai. Default `.env`; untuk akun lain jalankan dengan ENV_FILE=.env.akun2
+ * (ecosystem.config.cjs melakukannya otomatis untuk setiap file .env.<nama>).
+ */
+export function envFilePath() {
+  const f = process.env.ENV_FILE;
+  return f ? path.resolve(process.cwd(), f) : path.resolve(process.cwd(), '.env');
+}
+
+/** Nama akun dari nama file: .env -> '' (akun utama), .env.akun2 -> 'akun2'. */
+export function accountFromEnvFile(file) {
+  const base = path.basename(file);
+  return base.startsWith('.env.') ? base.slice(5) : '';
+}
+
 export function loadConfig() {
-  loadDotEnv();
+  const envFile = envFilePath();
+  if (process.env.ENV_FILE && !fs.existsSync(envFile)) throw new Error(`ENV_FILE ${envFile} tidak ditemukan`);
+  loadDotEnv(envFile);
+  const fileAccount = accountFromEnvFile(envFile);
   const cfg = {
+    envFile,
+    // Nama akun (tampil di dashboard & Telegram). Kosong = akun utama
+    accountName: str('ACCOUNT_NAME', fileAccount),
     apiKey: str('UNHEDGED_API_KEY'),
     apiBaseUrl: str('API_BASE_URL', 'https://api.unhedged.gg').replace(/\/+$/, ''),
     dryRun: bool('DRY_RUN', true),
@@ -111,7 +132,11 @@ export function loadConfig() {
     pollMs: num('POLL_MS', 4000),
     discoveryMs: num('DISCOVERY_MS', 30000),
     logLevel: str('LOG_LEVEL', 'info'),
-    logDir: str('LOG_DIR', 'logs'),
+    // Tiap akun WAJIB punya folder log sendiri (riwayat, rem harian, statistik terpisah)
+    logDir: str('LOG_DIR', fileAccount ? `logs-${fileAccount}` : 'logs'),
+    // Batas request publik Unhedged per detik untuk proses ini. Batas resmi 600/menit PER IP,
+    // jadi bila beberapa akun berjalan di VPS yang sama, jatahnya dibagi (ecosystem mengaturnya).
+    publicRps: num('PUBLIC_RPS', 8),
 
     // Notifikasi Telegram (token dari @BotFather, chat id dari `node src/index.js telegram`)
     telegramBotToken: str('TELEGRAM_BOT_TOKEN'),
@@ -151,6 +176,7 @@ function validate(cfg) {
   if (!(cfg.snipeMaxPrice > 0 && cfg.snipeMaxPrice < 1)) errs.push('SNIPE_MAX_PRICE harus di antara 0 dan 1');
   if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
   if (cfg.snipeMaxUsd < cfg.snipeUsd) errs.push('SNIPE_MAX_USD harus >= SNIPE_USD');
+  if (!(cfg.publicRps >= 1 && cfg.publicRps <= 10)) errs.push('PUBLIC_RPS harus di antara 1 dan 10');
   if (cfg.snipeLockConfirmSec < 0 || cfg.snipeLockConfirmSec > 20) errs.push('SNIPE_LOCK_CONFIRM_SEC harus di antara 0 dan 20');
   if (!(cfg.snipeKellyFraction > 0 && cfg.snipeKellyFraction <= 0.5)) errs.push('SNIPE_KELLY_FRACTION harus di (0, 0.5]');
   if (errs.length) throw new Error('Konfigurasi tidak valid:\n - ' + errs.join('\n - '));

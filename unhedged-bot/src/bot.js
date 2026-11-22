@@ -776,7 +776,8 @@ export class Bot {
   /** Kirim notifikasi Telegram (bila dikonfigurasi). Tidak pernah melempar error. */
   notify(html) {
     try {
-      this.tg?.send(html);
+      const acc = this.cfg.accountName ? `<b>[${h(this.cfg.accountName)}]</b> ` : '';
+      this.tg?.send(acc + html);
     } catch {
       /* abaikan */
     }
@@ -1158,6 +1159,7 @@ export class Bot {
         today: this.todayStats(),
         byStrategy: this.stratStats,
       },
+      accountName: c.accountName || null,
       latency: {
         ping: this.latency?.snapshot?.() ?? null,
         api: this.api?.timing ?? null,
