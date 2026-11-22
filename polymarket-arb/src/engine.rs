@@ -17,7 +17,7 @@ use ratatui::style::Color;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::arb::{self, Limits};
 use crate::book::{AskBook, parse_px, px_to_f64};
@@ -95,6 +95,8 @@ pub struct Engine {
     capital: f64,
     res_tx: mpsc::UnboundedSender<PairResult>,
     touched: Vec<usize>,
+    /// Set after any trade whose real outcome is unknown/unhedged: no new trades until restart.
+    halted: bool,
 }
 
 fn now_ms() -> i64 {
@@ -285,7 +287,8 @@ impl Engine {
         let Some(mk) = self.markets[idx].as_mut() else { return };
         let now_s = now_ms() / 1000;
         let secs_left = mk.info.end_ts.saturating_sub(now_s);
-        let blocked = mk.in_flight
+        let blocked = self.halted
+            || mk.in_flight
             || Instant::now() < mk.cooldown_until
             || secs_left < cfg.stop_before_end_secs;
 
@@ -384,6 +387,7 @@ impl Engine {
             up_token: mk.info.up_token,
             down_token: mk.info.down_token,
             tick_pips: mk.info.tick_pips,
+            min_shares: mk.info.min_shares,
             shares: o.shares,
             up_px: o.up_px,
             down_px: o.down_px,
@@ -412,7 +416,11 @@ impl Engine {
             }
         };
         let fees = fee(&r.up) + fee(&r.down);
-        let actual = r.usdc_spent + fees;
+        let mut actual = r.usdc_spent + fees;
+        if r.uncertain.is_some() {
+            // unknown fills: keep the full reservation counted against the budget
+            actual = actual.max(mk.reserved);
+        }
         mk.in_flight = false;
         mk.cooldown_until = Instant::now() + Duration::from_millis(self.cfg.cooldown_ms);
         mk.spent += actual - mk.reserved;
@@ -422,6 +430,17 @@ impl Engine {
         mk.shares_up += r.up.shares;
         mk.shares_down += r.down.shares;
 
+        if let Some(why) = &r.uncertain {
+            self.halted = true;
+            let label = mk.info.label.clone();
+            let msg = why.clone();
+            error!(market = %label, "TRADING HALTED: {msg}");
+            self.dash.log(&label, vec![
+                tag("ALERT", Color::Red),
+                col(format!("TRADING HALTED: {msg}. Check positions on polymarket.com, then restart the bot."), Color::Red),
+            ]);
+            self.dash.with(|s| s.halted = Some(msg));
+        }
         if r.fired {
             let both = r.up.shares > 0.0 && r.down.shares > 0.0;
             let none = r.up.shares <= 0.0 && r.down.shares <= 0.0;
@@ -524,6 +543,7 @@ pub async fn run(
         capital: 0.0,
         res_tx,
         touched: Vec::with_capacity(8),
+        halted: false,
     };
     let mut last_count = 0u64;
 

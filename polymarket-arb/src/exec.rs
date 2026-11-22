@@ -64,6 +64,7 @@ pub struct PairJob {
     pub up_token: U256,
     pub down_token: U256,
     pub tick_pips: u32,
+    pub min_shares: f64,
     pub shares: f64,
     pub up_px: u32,
     pub down_px: u32,
@@ -82,6 +83,8 @@ pub struct PairResult {
     pub usdc_spent: f64,
     /// true if an order was actually sent (false for dry-run / signing errors)
     pub fired: bool,
+    /// The real position is unknown or unhedged: stop opening new trades.
+    pub uncertain: Option<String>,
 }
 
 /// Polymarket L2 auth: base64url(HMAC-SHA256(secret, ts + METHOD + path + body)).
@@ -92,6 +95,47 @@ fn l2_signature(secret: &[u8], ts: u64, method: &str, path: &str, body: &str) ->
     mac.update(path.as_bytes());
     mac.update(body.as_bytes());
     Ok(URL_SAFE.encode(mac.finalize().into_bytes()))
+}
+
+/// Live mode only: refuse to start without enough collateral or without token allowances,
+/// otherwise one leg of a pair could be rejected for lack of funds while the other fills.
+async fn check_funds(client: &AuthClient, cfg: &Config) -> Result<()> {
+    use polymarket_client_sdk_v2::clob::types::request::BalanceAllowanceRequest;
+    let b = match client
+        .balance_allowance(BalanceAllowanceRequest::builder().asset_type(Default::default()).build())
+        .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("could not read balance/allowance (continuing): {e}");
+            return Ok(());
+        }
+    };
+    // The CLOB reports collateral in 6-decimal base units ("25000000" = $25). An integer is
+    // read as base units; this can only ever under-estimate the balance (safe direction).
+    let usdc = if b.balance.scale() == 0 {
+        to_f64(b.balance) / 1_000_000.0
+    } else {
+        to_f64(b.balance)
+    };
+    info!(raw = %b.balance, usdc, allowances = ?b.allowances, "collateral balance");
+    if usdc + 1e-9 < cfg.max_usdc_total {
+        bail!(
+            "USDC balance is ${usdc:.2} (raw {}) but MAX_USDC_TOTAL is ${:.2}. \
+             Deposit more or lower MAX_USDC_TOTAL (keep a buffer for leg recovery).",
+            b.balance,
+            cfg.max_usdc_total
+        );
+    }
+    if !b.allowances.is_empty()
+        && b.allowances.values().all(|v| v.trim().trim_start_matches('0').is_empty())
+    {
+        bail!(
+            "token allowance is 0: make one small manual trade on polymarket.com first \
+             (that approves the exchange contracts), then restart the bot"
+        );
+    }
+    Ok(())
 }
 
 fn dec_px(px: u32) -> Decimal {
@@ -139,6 +183,10 @@ impl Executor {
             ),
             Ok(_) => {}
             Err(e) => warn!("geoblock check failed (continuing): {e}"),
+        }
+
+        if !cfg.dry_run {
+            check_funds(&client, cfg).await?;
         }
 
         // Caches the protocol version so order building never touches the network.
@@ -288,9 +336,31 @@ impl Executor {
     }
 
     /// Turn an order response into the filled amount, waiting for "delayed" orders.
-    async fn leg_fill(&self, r: &PostOrderResponse, side: Side, limit_px: u32) -> LegFill {
+    /// `None` means the outcome is unknown (order still pending after polling).
+    async fn leg_fill(
+        &self,
+        r: &PostOrderResponse,
+        side: Side,
+        limit_px: u32,
+        size: f64,
+    ) -> Option<LegFill> {
+        let f = self.leg_fill_raw(r, side, limit_px).await?;
+        let ok = |x: f64| x <= size * 1.001 + 0.01;
+        if ok(f.shares) {
+            return Some(f);
+        }
+        // Amounts may come back in 6-decimal base units.
+        let scaled = LegFill { shares: f.shares / 1e6, usdc: f.usdc / 1e6 };
+        if ok(scaled.shares) {
+            return Some(scaled);
+        }
+        error!(reported = f.shares, size, "fill larger than the order size: state unknown");
+        None
+    }
+
+    async fn leg_fill_raw(&self, r: &PostOrderResponse, side: Side, limit_px: u32) -> Option<LegFill> {
         if !r.success {
-            return LegFill::default();
+            return Some(LegFill::default());
         }
         let from_resp = |r: &PostOrderResponse| {
             let (making, taking) = (to_f64(r.making_amount), to_f64(r.taking_amount));
@@ -307,7 +377,7 @@ impl Executor {
             }
         };
         match &r.status {
-            OrderStatusType::Matched => from_resp(r),
+            OrderStatusType::Matched => Some(from_resp(r)),
             OrderStatusType::Delayed | OrderStatusType::Live => {
                 // Poll the order until the matching engine settles it (max ~3s).
                 for _ in 0..30 {
@@ -317,19 +387,19 @@ impl Executor {
                             OrderStatusType::Matched | OrderStatusType::Canceled
                             | OrderStatusType::Unmatched => {
                                 let shares = to_f64(o.size_matched);
-                                return LegFill {
+                                return Some(LegFill {
                                     shares,
                                     usdc: shares * px_to_f64(limit_px),
-                                };
+                                });
                             }
                             _ => {}
                         }
                     }
                 }
-                warn!(order = %r.order_id, "order still pending after 3s; assuming unfilled");
-                LegFill::default()
+                error!(order = %r.order_id, "order still pending after 3s: fill state unknown");
+                None
             }
-            _ => LegFill::default(),
+            _ => Some(LegFill::default()),
         }
     }
 
@@ -341,6 +411,7 @@ impl Executor {
             down: LegFill::default(),
             usdc_spent: 0.0,
             fired: false,
+            uncertain: None,
         };
 
         if self.dry_run {
@@ -390,18 +461,25 @@ impl Executor {
             Ok(r) if r.len() == 2 => r,
             Ok(r) => {
                 error!(market = %job.label, "expected 2 responses, got {}: {r:?}", r.len());
+                out.uncertain = Some(format!("unexpected /orders response ({} entries)", r.len()));
                 return out;
             }
             Err(e) => {
+                // The request may have reached the exchange: we can't know what filled.
                 error!(market = %job.label, "pair order failed: {e:#}");
+                out.uncertain = Some(format!("pair order failed: {e}"));
                 return out;
             }
         };
 
         let (up, down) = tokio::join!(
-            self.leg_fill(&resp[0], Side::Buy, job.up_px),
-            self.leg_fill(&resp[1], Side::Buy, job.down_px),
+            self.leg_fill(&resp[0], Side::Buy, job.up_px, job.shares),
+            self.leg_fill(&resp[1], Side::Buy, job.down_px, job.shares),
         );
+        let (Some(up), Some(down)) = (up, down) else {
+            out.uncertain = Some("an order stayed pending; fill state unknown".into());
+            return out;
+        };
         info!(
             market = %job.label,
             up_shares = up.shares, down_shares = down.shares,
@@ -448,7 +526,8 @@ impl Executor {
     /// break-even) or sell the excess back.
     async fn fix_imbalance(&self, job: &PairJob, out: &mut PairResult) {
         let diff = out.up.shares - out.down.shares;
-        if diff.abs() < 0.01 {
+        if diff.abs() < 1.0 {
+            // < 1 share (e.g. fee/rounding dust): worth < $1 and below any tradable size.
             return;
         }
         let (long_is_up, excess) = (diff > 0.0, diff.abs());
@@ -483,16 +562,19 @@ impl Executor {
         let mut remaining = excess;
         if cap_px >= tick && cap_px < SCALE {
             for attempt in 1..=self.cfg.recovery_attempts {
-                if remaining < 0.01 {
+                let size = crate::arb::tradable_shares(remaining, &[cap_px]);
+                if remaining < 1.0 || size < job.min_shares.max(1.0) {
                     break;
                 }
                 let res = async {
                     let o = self
-                        .sign_buy(short_token, cap_px, remaining, OrderType::FAK)
+                        .sign_buy(short_token, cap_px, size, OrderType::FAK)
                         .await?;
                     let r = self.post(&[o]).await?;
                     let r = r.into_iter().next().ok_or_else(|| anyhow!("empty response"))?;
-                    Ok::<_, anyhow::Error>(self.leg_fill(&r, Side::Buy, cap_px).await)
+                    self.leg_fill(&r, Side::Buy, cap_px, size)
+                        .await
+                        .ok_or_else(|| anyhow!("recovery order pending, state unknown"))
                 }
                 .await;
                 match res {
@@ -505,26 +587,30 @@ impl Executor {
                     }
                     Err(e) => warn!(attempt, "recovery buy failed: {e:#}"),
                 }
-                if remaining >= 0.01 {
+                if remaining >= 1.0 {
                     tokio::time::sleep(Duration::from_millis(150)).await;
                 }
             }
         }
-        if remaining < 0.01 {
+        if remaining < 1.0 {
             info!(market = %job.label, "leg risk resolved: pair completed");
+            self.dash.log(&job.label, vec![tag("risk", Color::Green), col("leg risk resolved: pair completed", Color::Green)]);
             return;
         }
 
         // 2) Still unbalanced: sell the excess of the long leg back.
         let floor = (long_avg - self.cfg.unwind_max_loss_per_share).max(px_to_f64(tick));
         let floor_px = ((floor * f64::from(SCALE)).ceil() as u32).div_ceil(tick) * tick;
+        let sell_size = (remaining * 100.0 + 1e-9).floor() / 100.0;
         let res = async {
             let o = self
-                .sign(long_token, floor_px, remaining, Side::Sell, OrderType::FAK)
+                .sign(long_token, floor_px, sell_size, Side::Sell, OrderType::FAK)
                 .await?;
             let r = self.post(&[o]).await?;
             let r = r.into_iter().next().ok_or_else(|| anyhow!("empty response"))?;
-            Ok::<_, anyhow::Error>(self.leg_fill(&r, Side::Sell, floor_px).await)
+            self.leg_fill(&r, Side::Sell, floor_px, sell_size)
+                .await
+                .ok_or_else(|| anyhow!("unwind order pending, state unknown"))
         }
         .await;
         match res {
@@ -533,17 +619,20 @@ impl Executor {
                 tgt.shares -= f.shares;
                 tgt.usdc -= f.usdc;
                 let left = remaining - f.shares;
-                if left >= 0.01 {
+                if left >= 1.0 {
                     error!(market = %job.label, left, "ALERT: unhedged shares remain (directional exposure)");
+                    out.uncertain = Some(format!("{left:.2} unhedged shares remain"));
                 } else {
                     info!(market = %job.label, sold = f.shares, "excess leg unwound");
                 }
             }
             Ok(_) => {
-                error!(market = %job.label, remaining, "ALERT: could not unwind; unhedged shares remain")
+                error!(market = %job.label, remaining, "ALERT: could not unwind; unhedged shares remain");
+                out.uncertain = Some(format!("could not unwind {remaining:.2} unhedged shares"));
             }
             Err(e) => {
-                error!(market = %job.label, remaining, "ALERT: unwind failed: {e:#}")
+                error!(market = %job.label, remaining, "ALERT: unwind failed: {e:#}");
+                out.uncertain = Some(format!("unwind failed: {e}"));
             }
         }
     }

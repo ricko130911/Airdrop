@@ -101,7 +101,7 @@ fn draw(f: &mut Frame, dash: &Dash, view: &View) {
         // Narrow screen (e.g. SSH from a phone): stack panels, drop Metadata.
         let [mlist, metrics, logs] = Layout::vertical([
             Constraint::Length(mlist_h),
-            Constraint::Length(22),
+            Constraint::Length(23),
             Constraint::Min(5),
         ])
         .areas(main);
@@ -208,6 +208,8 @@ fn draw_metrics(f: &mut Frame, area: Rect, dash: &Dash, s: &State) {
         kv("CLOB RTT", ms((s.clob_rtt_us > 0).then_some(s.clob_rtt_us)), Color::White, w),
         kv("Book msgs/s", s.msgs_per_sec.to_string(), Color::White, w),
         kv("Capital in use", format!("${:.2}", s.capital_in_use), Color::White, w),
+        kv("Trading", s.halted.as_ref().map_or("active".to_string(), |_| "HALTED".to_string()),
+            if s.halted.is_some() { Color::Red } else { Color::Green }, w),
         kv("WS feed", s.ws_status.clone(), if s.ws_status.starts_with("ok") { Color::Green } else { Color::Red }, w),
     ];
     f.render_widget(Paragraph::new(lines).block(panel("Custom Metrics")), area);

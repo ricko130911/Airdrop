@@ -122,6 +122,7 @@ async fn state(AxState(app): AxState<App>, headers: HeaderMap) -> Response {
         "rtt": s.clob_rtt_us,
         "msgs": s.msgs_per_sec,
         "ws": s.ws_status,
+        "halted": s.halted,
         "logs": logs,
     });
     drop(s);

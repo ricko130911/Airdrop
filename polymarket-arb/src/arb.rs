@@ -69,9 +69,22 @@ impl Opportunity {
     }
 }
 
-#[inline]
-fn floor_lot(x: f64) -> f64 {
-    (x * 100.0 + 1e-9).floor() / 100.0
+/// Largest whole-share size <= `raw` for which `size * price` has at most 2 decimals for
+/// every given price (pips). Marketable (FOK/FAK) orders whose USDC amount has more than
+/// 2 decimals are rejected by the exchange, which could leave one leg unfilled.
+pub fn tradable_shares(raw: f64, prices: &[u32]) -> f64 {
+    if !raw.is_finite() || raw < 1.0 {
+        return 0.0;
+    }
+    let mut s = (raw + 1e-9).floor() as u64;
+    while s > 0 {
+        // price in pips (1e-4): size*pips is the USDC amount in 1e-4 units; 2dp <=> % 100 == 0
+        if prices.iter().all(|&p| (s * u64::from(p)).is_multiple_of(100)) {
+            return s as f64;
+        }
+        s -= 1;
+    }
+    0.0
 }
 
 pub fn find(
@@ -153,8 +166,8 @@ pub fn find(
         }
     }
 
-    let shares = floor_lot(shares);
-    if shares < lim.min_shares.max(0.01) {
+    let shares = tradable_shares(shares, &[up_px, down_px]);
+    if shares < lim.min_shares.max(1.0) {
         return None;
     }
 
@@ -268,6 +281,25 @@ mod tests {
         };
         assert!(find(&up, &down, &NO_FEE, &NO_FEE, &lim()).is_some());
         assert!(find(&up, &down, &fee, &fee, &lim()).is_none());
+    }
+
+    #[test]
+    fn sizes_keep_usdc_amounts_at_two_decimals() {
+        assert_eq!(tradable_shares(10.37, &[4800, 5000]), 10.0);
+        assert_eq!(tradable_shares(17.9, &[4850, 5000]), 16.0); // 17*0.485=8.245 (3dp) -> 16*0.485=7.76
+        assert_eq!(tradable_shares(0.9, &[4800]), 0.0);
+        for s in [5.0, 7.0, 33.0] {
+            let t = tradable_shares(s, &[4850, 4910]);
+            assert!(t <= s && ((t * 4850.0) as u64) % 100 == 0 && ((t * 4910.0) as u64) % 100 == 0);
+        }
+    }
+
+    #[test]
+    fn opportunity_amounts_are_exchange_valid() {
+        let up = book(&[(4850, 37.0)]);
+        let down = book(&[(4910, 1000.0)]);
+        let o = find(&up, &down, &NO_FEE, &NO_FEE, &lim()).unwrap();
+        assert_eq!(o.shares, 30.0); // 37 -> 30 so 0.485*s and 0.491*s have <= 2 decimals
     }
 
     #[test]

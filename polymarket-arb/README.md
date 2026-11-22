@@ -30,6 +30,13 @@ EIP-712 V2 dijamin benar; dan memory-safety mencegah crash di tengah trading.
   (default 1.00 = impas); jika gagal, jual kembali kelebihannya dengan rugi maks
   `UNWIND_MAX_LOSS_PER_SHARE`. Sisa yang tidak bisa ditutup ditandai `ALERT` di log.
 - Batas modal per trade / per market / total, berhenti `STOP_BEFORE_END_SECS` sebelum jendela tutup.
+- **HALT otomatis**: jika status order tidak pasti (koneksi putus saat kirim, order menggantung,
+  angka fill tidak masuk akal) atau ada posisi satu sisi yang tidak bisa ditutup, bot berhenti
+  membuka trade baru (`Trading: HALTED` + `[ALERT]` di dashboard). Cek posisi di polymarket.com,
+  lalu restart bot.
+- Ukuran order selalu bilangan bulat share sehingga nilai USDC tiap kaki maksimal 2 desimal
+  (syarat order FOK/FAK), dan tidak pernah di bawah ukuran minimum market.
+- Mode LIVE menolak start jika saldo USDC < `MAX_USDC_TOTAL` atau allowance belum aktif.
 - Cek geoblock saat start — bot menolak jalan jika IP diblokir Polymarket.
 - `DRY_RUN=true` secara default.
 

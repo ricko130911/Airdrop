@@ -45,6 +45,8 @@ pub struct State {
     pub ws_status: String,
     pub clob_rtt_us: u64,
     pub msgs_per_sec: u64,
+    /// Some(reason) once trading has been halted for safety.
+    pub halted: Option<String>,
 }
 
 pub struct Dash {
