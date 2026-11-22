@@ -461,8 +461,8 @@ impl Engine {
                 let m = slot.take().unwrap();
                 self.by_token.remove(&m.up_id);
                 self.by_token.remove(&m.down_id);
-                // capital stays locked until the user redeems; keep it out of the live budget
-                self.capital -= m.spent;
+                // The USDC only comes back after the user redeems on polymarket.com, so the
+                // capital stays counted against MAX_USDC_TOTAL until the bot is restarted.
                 if m.shares_up > 0.0 || m.shares_down > 0.0 {
                     let pnl = m.shares_up.min(m.shares_down) - m.spent;
                     self.dash.log(
