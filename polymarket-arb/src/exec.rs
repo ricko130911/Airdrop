@@ -483,24 +483,11 @@ impl Executor {
                 }
             }
             OrderStatusType::Delayed | OrderStatusType::Live => {
-                // Poll the order until the matching engine settles it (max ~3s).
-                for _ in 0..30 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    if let Ok(o) = self.client.order(&r.order_id).await {
-                        match o.status {
-                            OrderStatusType::Matched | OrderStatusType::Canceled
-                            | OrderStatusType::Unmatched => {
-                                let shares = to_f64(o.size_matched);
-                                return Some(LegFill {
-                                    shares,
-                                    usdc: shares * px_to_f64(limit_px),
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                error!(order = %r.order_id, "order still pending after 3s: fill state unknown");
+                // A delayed/live marketable order can still fill AFTER we look at it (seen
+                // live: reported as not filled, then filled seconds later). Its outcome is
+                // therefore unknown: never count it as "not filled".
+                let _ = limit_px;
+                error!(order = %r.order_id, status = ?r.status, "order delayed by the exchange: fill state unknown");
                 None
             }
             OrderStatusType::Unmatched | OrderStatusType::Canceled => {
