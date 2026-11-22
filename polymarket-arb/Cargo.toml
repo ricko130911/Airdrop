@@ -26,6 +26,7 @@ dotenvy = "0.15"
 mimalloc = { version = "0.1", default-features = false }
 ratatui = "0.30"
 crossterm = "0.29"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 
 [profile.release]
 opt-level = 3

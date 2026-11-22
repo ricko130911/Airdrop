@@ -4,6 +4,8 @@
 //!   polymarket-arb            # TUI dashboard (default), reads config from env / .env
 //!   polymarket-arb --no-tui   # plain logs to stdout (for systemd / tmux / docker)
 //!   polymarket-arb --demo     # dashboard with a simulated feed, no wallet needed
+//!
+//! Web dashboard: http://<vps-ip>:WEB_PORT (needs WEB_PASSWORD, see .env.example)
 
 mod arb;
 mod book;
@@ -14,6 +16,7 @@ mod discovery;
 mod engine;
 mod exec;
 mod ui;
+mod web;
 
 use std::sync::Arc;
 
@@ -23,6 +26,16 @@ use tracing::info;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+fn start_web(dash: &Arc<dash::Dash>) {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    if env("WEB_ENABLED").is_some_and(|v| v == "false") {
+        return;
+    }
+    let port = env("WEB_PORT").and_then(|p| p.parse().ok()).unwrap_or(8080);
+    let user = env("WEB_USER").unwrap_or_else(|| "admin".into());
+    web::spawn(Arc::clone(dash), port, user, env("WEB_PASSWORD"));
+}
 
 fn main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -56,6 +69,7 @@ fn main() -> Result<()> {
     rt.block_on(async move {
         if demo {
             let dash = Arc::new(dash::Dash::new(true, 0.98, "btc,eth (simulated) 5m,15m".into()));
+            start_web(&dash);
             if tui {
                 ui::spawn(Arc::clone(&dash));
             }
@@ -70,6 +84,7 @@ fn main() -> Result<()> {
         );
         let dash = Arc::new(dash::Dash::new(cfg.dry_run, cfg.max_pair_cost, watching));
         info!(dry_run = cfg.dry_run, max_pair_cost = cfg.max_pair_cost, "starting");
+        start_web(&dash);
 
         let exec = exec::Executor::new(&cfg, Arc::clone(&dash)).await?;
         exec.latency_probe().await;

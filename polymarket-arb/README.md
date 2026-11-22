@@ -52,6 +52,16 @@ Syarat wallet: saldo USDC di Polymarket dan allowance sudah di-approve (otomatis
 trading lewat polymarket.com). Setelah market selesai, **redeem** posisi menang di polymarket.com
 (bot tidak melakukan redeem/merge on-chain).
 
+## Dashboard web
+Bot juga menyajikan dashboard yang sama di browser (desktop & HP), hanya untuk melihat:
+
+![web](docs/web-dashboard.png)
+
+Isi di `.env`: `WEB_PASSWORD=<password-panjang>` (dan opsional `WEB_PORT`, `WEB_USER`), buka port
+di firewall (`ufw allow 8080/tcp`), lalu buka `http://IP-VPS:8080` dan login.
+Tanpa `WEB_PASSWORD`, dashboard hanya terbuka di `127.0.0.1` (akses lewat SSH tunnel).
+Koneksinya HTTP biasa (tidak terenkripsi), jadi pakai password khusus yang tidak dipakai di tempat lain.
+
 ## Hal yang perlu diketahui (jujur)
 - **Tidak ada bot yang dijamin selalu menang** melawan bot lain. Peluang Σ < 0.98 di pasar
   likuid jarang dan hilang dalam milidetik; pemenangnya biasanya yang servernya paling dekat.
