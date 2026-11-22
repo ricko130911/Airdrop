@@ -1,0 +1,3 @@
+# Compile for the exact CPU of the machine that builds the bot (run the build on your VPS).
+[build]
+rustflags = ["-C", "target-cpu=native"]
