@@ -48,6 +48,8 @@ pub struct State {
     pub msgs_per_sec: u64,
     /// Some(reason) once trading has been halted for safety.
     pub halted: Option<String>,
+    /// Polymarket cash balance (USDC), refreshed periodically.
+    pub balance: Option<f64>,
 }
 
 pub struct Dash {

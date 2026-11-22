@@ -106,6 +106,7 @@ function render(st){
     kv('Sign latency p50', ms(st.signP50)) +
     kv('CLOB RTT', ms(st.rtt)) +
     kv('Book msgs/s', st.msgs) +
+    kv('Polymarket balance', st.balance == null ? '-' : '$' + st.balance.toFixed(2), 'g') +
     kv('Capital in use', '$' + st.capital.toFixed(2)) +
     kv('Trading', st.halted ? 'HALTED' : 'active', st.halted ? 'r' : 'g') +
     kv('WS feed', st.ws, st.ws.startsWith('ok') ? 'g' : 'r');

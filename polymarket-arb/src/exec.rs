@@ -97,6 +97,20 @@ fn l2_signature(secret: &[u8], ts: u64, method: &str, path: &str, body: &str) ->
     Ok(URL_SAFE.encode(mac.finalize().into_bytes()))
 }
 
+/// Collateral balance in dollars. The CLOB reports 6-decimal base units ("25000000" = $25);
+/// an integer is read as base units, which can only under-estimate (safe direction).
+fn balance_usdc(b: Decimal) -> f64 {
+    if b.scale() == 0 { to_f64(b) / 1_000_000.0 } else { to_f64(b) }
+}
+
+async fn fetch_balance(client: &AuthClient) -> Result<f64> {
+    use polymarket_client_sdk_v2::clob::types::request::BalanceAllowanceRequest;
+    let b = client
+        .balance_allowance(BalanceAllowanceRequest::builder().asset_type(Default::default()).build())
+        .await?;
+    Ok(balance_usdc(b.balance))
+}
+
 /// Live mode only: refuse to start without enough collateral or without token allowances,
 /// otherwise one leg of a pair could be rejected for lack of funds while the other fills.
 async fn check_funds(client: &AuthClient, cfg: &Config) -> Result<()> {
@@ -111,13 +125,7 @@ async fn check_funds(client: &AuthClient, cfg: &Config) -> Result<()> {
             return Ok(());
         }
     };
-    // The CLOB reports collateral in 6-decimal base units ("25000000" = $25). An integer is
-    // read as base units; this can only ever under-estimate the balance (safe direction).
-    let usdc = if b.balance.scale() == 0 {
-        to_f64(b.balance) / 1_000_000.0
-    } else {
-        to_f64(b.balance)
-    };
+    let usdc = balance_usdc(b.balance);
     info!(raw = %b.balance, usdc, allowances = ?b.allowances, "collateral balance");
     if usdc + 1e-9 < cfg.max_usdc_total {
         bail!(
@@ -280,6 +288,18 @@ impl Executor {
             dry_run: cfg.dry_run,
             cfg: cfg.clone(),
             dash,
+        });
+
+        // Show the Polymarket cash balance on the dashboards (refreshed every 15s).
+        let bal = Arc::clone(&exec);
+        tokio::spawn(async move {
+            loop {
+                match fetch_balance(&bal.client).await {
+                    Ok(usdc) => bal.dash.with(|s| s.balance = Some(usdc)),
+                    Err(e) => warn!("balance refresh failed: {e}"),
+                }
+                tokio::time::sleep(Duration::from_secs(15)).await;
+            }
         });
 
         // Keep the TLS connection to the CLOB hot so the first order doesn't pay for a handshake.
