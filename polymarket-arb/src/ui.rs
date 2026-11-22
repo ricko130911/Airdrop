@@ -96,18 +96,30 @@ fn fmt_dur(secs: u64) -> String {
 fn draw(f: &mut Frame, dash: &Dash, view: &View) {
     let s = dash.state.lock().unwrap();
     let [main, footer] = Layout::vertical([Constraint::Min(10), Constraint::Length(1)]).areas(f.area());
-    let [left, right] =
-        Layout::horizontal([Constraint::Length(42), Constraint::Min(40)]).areas(main);
     let mlist_h = (s.markets.len() as u16 + 2).clamp(3, 10);
-    let [mlist, metrics] =
-        Layout::vertical([Constraint::Length(mlist_h), Constraint::Min(5)]).areas(left);
-    let [logs, meta] =
-        Layout::vertical([Constraint::Min(5), Constraint::Length(8)]).areas(right);
-
-    draw_markets(f, mlist, &s);
-    draw_metrics(f, metrics, dash, &s);
-    draw_logs(f, logs, &s, view);
-    draw_meta(f, meta, dash, &s);
+    if main.width < 100 {
+        // Narrow screen (e.g. SSH from a phone): stack panels, drop Metadata.
+        let [mlist, metrics, logs] = Layout::vertical([
+            Constraint::Length(mlist_h),
+            Constraint::Length(22),
+            Constraint::Min(5),
+        ])
+        .areas(main);
+        draw_markets(f, mlist, &s);
+        draw_metrics(f, metrics, dash, &s);
+        draw_logs(f, logs, &s, view);
+    } else {
+        let [left, right] =
+            Layout::horizontal([Constraint::Length(42), Constraint::Min(40)]).areas(main);
+        let [mlist, metrics] =
+            Layout::vertical([Constraint::Length(mlist_h), Constraint::Min(5)]).areas(left);
+        let [logs, meta] =
+            Layout::vertical([Constraint::Min(5), Constraint::Length(8)]).areas(right);
+        draw_markets(f, mlist, &s);
+        draw_metrics(f, metrics, dash, &s);
+        draw_logs(f, logs, &s, view);
+        draw_meta(f, meta, dash, &s);
+    }
 
     let now = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
     let help = "left/right: switch market | up/down/PgUp/PgDn: scroll | a: all markets | q: exit";

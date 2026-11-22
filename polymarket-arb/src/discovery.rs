@@ -2,9 +2,9 @@
 //! any extra slugs, and pre-warms every cache the order builder needs (tick size, neg-risk,
 //! fee parameters, protocol version) so that the hot path never does network I/O.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use polymarket_client_sdk_v2::gamma::Client as GammaClient;
@@ -125,6 +125,9 @@ pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>)
         }
     };
     let mut seen: HashSet<String> = HashSet::new();
+    // slugs that didn't exist yet: don't ask Gamma again for 20s (coins without a market
+    // for an interval simply never show up, without spamming the API)
+    let mut missing: HashMap<String, Instant> = HashMap::new();
     loop {
         let now = now_secs();
         let mut wanted: Vec<(String, String, Option<i64>)> = Vec::new();
@@ -144,7 +147,10 @@ pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>)
         }
 
         for (slug, label, end) in wanted {
-            if seen.contains(&slug) || end.is_some_and(|e| e <= now) {
+            if seen.contains(&slug)
+                || end.is_some_and(|e| e <= now)
+                || missing.get(&slug).is_some_and(|t| t.elapsed() < Duration::from_secs(20))
+            {
                 continue;
             }
             match load(&gamma, &exec, &slug, label, end).await {
@@ -155,11 +161,14 @@ pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>)
                         return;
                     }
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    missing.insert(slug, Instant::now());
+                }
                 Err(e) => warn!("{slug}: {e:#}"),
             }
         }
         // forget old slugs so the set doesn't grow forever
+        missing.retain(|_, t| t.elapsed() < Duration::from_secs(60));
         seen.retain(|s| {
             s.rsplit('-')
                 .next()

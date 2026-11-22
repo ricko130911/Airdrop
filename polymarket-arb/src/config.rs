@@ -105,7 +105,7 @@ fn parse_interval(s: &str) -> Result<Interval> {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let intervals = list("INTERVALS", "5m,15m")
+        let intervals = list("INTERVALS", "5m")
             .iter()
             .map(|s| parse_interval(s))
             .collect::<Result<Vec<_>>>()?;
@@ -123,7 +123,7 @@ impl Config {
             signature_type: parse("SIGNATURE_TYPE", 0u8)?,
             funder: var("FUNDER_ADDRESS"),
 
-            assets: list("ASSETS", "btc,eth,sol,xrp"),
+            assets: list("ASSETS", "btc,eth,sol,xrp,doge,bnb,hype"),
             intervals,
             extra_slugs: list("EXTRA_SLUGS", ""),
 
