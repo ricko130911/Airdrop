@@ -842,7 +842,9 @@ export class Bot {
   /** Detik pengamatan sebelum jendela tembak (untuk konfirmasi taruhan besar). */
   warmupSec() {
     const c = this.cfg;
-    return c.strategy === 'sniper' && c.snipeLockConfirmSec > 0 ? c.snipeLockConfirmSec + 2 : 0;
+    if (c.strategy !== 'sniper') return 0;
+    const need = Math.max(c.snipeLockConfirmSec > 0 ? c.snipeLockConfirmSec : 0, c.snipeBlockShrink ? c.snipeShrinkSec : 0);
+    return need > 0 ? need + 2 : 0;
   }
 
   /** Jendela trading efektif (detik tersisa) sesuai strategi. */
@@ -929,7 +931,7 @@ export class Bot {
     const confirmSec = this.cfg.snipeLockConfirmSec ?? 0;
     const stab = confirmSec > 0 ? lockStability(entry.zHist, side, { confirmSec }) : null;
     const sizeZ = stab ? (stab.confirmed ? stab.zHeld : null) : lockZ;
-    const d = decideSnipe({
+    let d = decideSnipe({
       prob,
       side,
       book: entry.book,
@@ -941,6 +943,21 @@ export class Bot {
       lockZ: sizeZ,
       allowBoost: today.snipeLosses === 0,
     });
+    // Pengaman: harga sedang bergerak mendekati batas menang/kalah -> tunda tembakan (detik berikutnya dicek lagi)
+    let trend = null;
+    if (d.action === 'buy' && this.cfg.snipeBlockShrink) {
+      trend = lockStability(entry.zHist, side, { confirmSec: this.cfg.snipeShrinkSec, shrinkTol: this.cfg.snipeShrinkTol });
+      const zf = (z) => (z === Infinity ? 'pasti' : Number.isFinite(z) ? `${z.toFixed(1)}σ` : '?');
+      if (trend.zHeld === null) {
+        d = { action: 'skip', code: 'shrinking', reason: `menunggu ${this.cfg.snipeShrinkSec} dtk data arah harga` };
+      } else if (trend.shrinking && trend.zNow < this.cfg.snipeShrinkMaxZ) {
+        d = { action: 'skip', code: 'shrinking', reason: `harga bergerak mendekati batas (jarak aman ${zf(trend.zStart)} → ${zf(trend.zNow)} dalam ${this.cfg.snipeShrinkSec} dtk)` };
+        // Catat sekali per market agar log tidak penuh (dicek ulang tiap detik)
+        if (!entry.heldLogged) this.log.info(`${tag} ${info} -> sniper DITAHAN: ${d.reason}`);
+        entry.heldLogged = true;
+      }
+    }
+    if (d.action === 'buy' && trend) d = { ...d, trend: { zStart: trend.zStart, zNow: trend.zNow, sec: this.cfg.snipeShrinkSec } };
     let sizeNote = '';
     if (d.action === 'buy') {
       const zShow = sizeZ ?? lockZ;

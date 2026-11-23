@@ -104,6 +104,13 @@ export function loadConfig() {
     snipeLockedUsd: num('SNIPE_LOCKED_USD', 6),
     // Taruhan besar hanya bila jarak aman bertahan & tidak menyusut selama N detik terakhir (0 = mati)
     snipeLockConfirmSec: num('SNIPE_LOCK_CONFIRM_SEC', 3),
+    // Pengaman: JANGAN menembak (berapa pun taruhannya) bila jarak aman menyusut lebih dari
+    // (1 - SNIPE_SHRINK_TOL) dalam SNIPE_SHRINK_SEC detik terakhir = harga bergerak mendekati batas.
+    snipeBlockShrink: bool('SNIPE_BLOCK_SHRINK', true),
+    snipeShrinkSec: num('SNIPE_SHRINK_SEC', 3),
+    snipeShrinkTol: num('SNIPE_SHRINK_TOL', 0.9),
+    // Pengaman hanya berlaku bila jarak aman sekarang < nilai ini (di atasnya hasil praktis pasti)
+    snipeShrinkMaxZ: num('SNIPE_SHRINK_MAX_Z', 5),
     snipePollMs: num('SNIPE_POLL_MS', 1000),
     snipeMaxLossesPerDay: num('SNIPE_MAX_LOSSES_PER_DAY', 2),
     dailyProfitTargetUsd: num('DAILY_PROFIT_TARGET_USD', 0),
@@ -177,6 +184,8 @@ function validate(cfg) {
   if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
   if (cfg.snipeMaxUsd < cfg.snipeUsd) errs.push('SNIPE_MAX_USD harus >= SNIPE_USD');
   if (!(cfg.publicRps >= 1 && cfg.publicRps <= 10)) errs.push('PUBLIC_RPS harus di antara 1 dan 10');
+  if (!(cfg.snipeShrinkSec >= 1 && cfg.snipeShrinkSec <= 20)) errs.push('SNIPE_SHRINK_SEC harus di antara 1 dan 20');
+  if (!(cfg.snipeShrinkTol > 0 && cfg.snipeShrinkTol <= 1)) errs.push('SNIPE_SHRINK_TOL harus di (0, 1]');
   if (cfg.snipeLockConfirmSec < 0 || cfg.snipeLockConfirmSec > 20) errs.push('SNIPE_LOCK_CONFIRM_SEC harus di antara 0 dan 20');
   if (!(cfg.snipeKellyFraction > 0 && cfg.snipeKellyFraction <= 0.5)) errs.push('SNIPE_KELLY_FRACTION harus di (0, 0.5]');
   if (errs.length) throw new Error('Konfigurasi tidak valid:\n - ' + errs.join('\n - '));

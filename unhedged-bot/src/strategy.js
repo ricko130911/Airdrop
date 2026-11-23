@@ -232,7 +232,7 @@ export function lockStability(hist, side, { now = Date.now(), confirmSec = 3, sh
   const first = zs[0];
   const last = zs.at(-1);
   const shrinking = first > 0 && last < first * shrinkTol;
-  return { confirmed: !shrinking, zHeld, heldSec, shrinking };
+  return { confirmed: !shrinking, zHeld, heldSec, shrinking, zStart: first, zNow: last };
 }
 
 export const SNIPE_REASON_LABEL = {
@@ -244,6 +244,7 @@ export const SNIPE_REASON_LABEL = {
   size: 'batas modal',
   data: 'data belum lengkap',
   suspicious: 'harga mencurigakan (data basi?)',
+  shrinking: 'harga bergerak mendekati batas',
 };
 
 /**

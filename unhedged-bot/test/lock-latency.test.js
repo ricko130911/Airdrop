@@ -18,6 +18,8 @@ test('lockStability: jarak aman menyusut (harga mendekati batas) -> tidak dikonf
   const r = lockStability(hist([8, 7, 6, 5.2]), 'up', { now: NOW, confirmSec: 3 });
   assert.equal(r.confirmed, false);
   assert.equal(r.shrinking, true);
+  assert.equal(r.zStart, 8);
+  assert.equal(r.zNow, 5.2);
 });
 
 test('lockStability: belum cukup lama diamati -> tidak dikonfirmasi', () => {
