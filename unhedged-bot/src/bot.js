@@ -605,22 +605,26 @@ export class Bot {
     }
   }
 
+  /** Batalkan order bot. true = berhasil dibatalkan (atau simulasi), false = gagal (mungkin sudah terisi). */
   async cancelOrder(entry, reason) {
-    if (!entry.order) return;
+    if (!entry.order) return true;
     const tag = `[${this.label(entry)}]`;
     if (!this.live || entry.order.dry) {
       this.log.info(`[DRY] ${tag} batalkan order ${entry.order.side.toUpperCase()} @ ${entry.order.price.toFixed(2)} (${reason})`);
       entry.order = null; // order simulasi yang dibatalkan = tidak pernah terisi
-      return;
+      return true;
     }
+    let ok = true;
     try {
       await this.api.cancelOrders(entry.market.id, [entry.order.id]);
       this.log.info(`${tag} order #${entry.order.id} dibatalkan (${reason})`);
     } catch (e) {
       // 404/400 biasanya berarti order sudah terisi/ditutup
       this.log.warn(`${tag} batal order #${entry.order.id} gagal: ${e.message}`);
+      ok = false;
     }
     entry.order = null;
+    return ok;
   }
 
   async placeBet(entry, d, tag, info) {
@@ -882,9 +886,27 @@ export class Bot {
    * data per detik lengkap, ada penjual, dan masih untung setelah fee.
    */
   async handleSnipe(entry, secondsLeft, est, pUpRaw, tag, info, exposureLeftUsd) {
-    // Order sniper yang tidak langsung terisi tidak dikejar: batalkan
+    // Order sniper yang tidak langsung terisi tidak dikejar: batalkan, lalu PASTIKAN tidak ada yang
+    // terisi (penuh/sebagian) sebelum boleh menembak lagi. Tanpa ini satu market bisa terbeli berkali-kali.
     if (entry.order) {
-      await this.cancelOrder(entry, 'tembakan tidak terisi, tidak dikejar');
+      const cancelled = await this.cancelOrder(entry, 'tembakan tidak terisi, tidak dikejar');
+      if (this.live) {
+        if (!cancelled) {
+          entry.hasPosition = true; // batal gagal = kemungkinan besar sudah terisi; hasil asli dicek saat settle
+          entry.lastDecision = 'order kemungkinan sudah terisi, tidak menembak lagi';
+          return;
+        }
+        await this.reconcileFills(entry);
+        if (entry.hasPosition) {
+          entry.lastDecision = 'order terisi sebagian, posisi ditahan (tidak menembak lagi)';
+          return;
+        }
+      }
+      return;
+    }
+    // Batas percobaan per market (order yang tidak terisi lalu dibatalkan)
+    if ((entry.snipeAttempts ?? 0) >= this.cfg.snipeMaxAttempts) {
+      entry.lastDecision = `sudah ${entry.snipeAttempts}x mencoba tanpa terisi, round ini dilewati`;
       return;
     }
     // Riwayat jarak aman (z UP) untuk konfirmasi "arah tidak berbalik"
@@ -985,6 +1007,7 @@ export class Bot {
       return;
     }
     entry.scan.fired = true;
+    entry.snipeAttempts = (entry.snipeAttempts ?? 0) + 1;
     await this.placeOrder(entry, d, `${tag} [SNIPER${d.sizing.scaled ? ' +' : ''}]`, info + sizeNote);
     this.simulateFill(entry, tag);
   }

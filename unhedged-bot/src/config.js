@@ -107,6 +107,8 @@ export function loadConfig() {
     // Pengaman: JANGAN menembak (berapa pun taruhannya) bila jarak aman menyusut lebih dari
     // (1 - SNIPE_SHRINK_TOL) dalam SNIPE_SHRINK_SEC detik terakhir = harga bergerak mendekati batas.
     snipeBlockShrink: bool('SNIPE_BLOCK_SHRINK', true),
+    // Maksimal percobaan order per market (order yang tidak terisi dibatalkan lalu dicoba lagi)
+    snipeMaxAttempts: num('SNIPE_MAX_ATTEMPTS', 3),
     snipeShrinkSec: num('SNIPE_SHRINK_SEC', 3),
     snipeShrinkTol: num('SNIPE_SHRINK_TOL', 0.9),
     // Pengaman hanya berlaku bila jarak aman sekarang < nilai ini (di atasnya hasil praktis pasti)
@@ -184,6 +186,7 @@ function validate(cfg) {
   if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
   if (cfg.snipeMaxUsd < cfg.snipeUsd) errs.push('SNIPE_MAX_USD harus >= SNIPE_USD');
   if (!(cfg.publicRps >= 1 && cfg.publicRps <= 10)) errs.push('PUBLIC_RPS harus di antara 1 dan 10');
+  if (!(cfg.snipeMaxAttempts >= 1)) errs.push('SNIPE_MAX_ATTEMPTS harus >= 1');
   if (!(cfg.snipeShrinkSec >= 1 && cfg.snipeShrinkSec <= 20)) errs.push('SNIPE_SHRINK_SEC harus di antara 1 dan 20');
   if (!(cfg.snipeShrinkTol > 0 && cfg.snipeShrinkTol <= 1)) errs.push('SNIPE_SHRINK_TOL harus di (0, 1]');
   if (cfg.snipeLockConfirmSec < 0 || cfg.snipeLockConfirmSec > 20) errs.push('SNIPE_LOCK_CONFIRM_SEC harus di antara 0 dan 20');
