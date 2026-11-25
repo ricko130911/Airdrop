@@ -395,7 +395,7 @@ function renderPing(L){
     const yMax = Math.ceil(top / step) * step, ticks = [];
     for (let v = 0; v <= yMax + 1e-9; v += step) ticks.push(v);
     lineChart($('pingchart'), { xs, yMin: 0, yMax, yTicks: ticks, xTicks: true, pad: { l: 40, r: 10, t: 8, b: 22 },
-      yFmt: v => v.toFixed(0), xFmt: t => hhmmss(t).slice(0, 5),
+      yFmt: v => v.toFixed(0), xFmt: (xs[xs.length-1] - xs[0]) < 600 ? (t => hhmmss(t)) : (t => hhmmss(t).slice(0, 5)),
       series: [{ ys, color: css('--series-up'), name: 'ping' }],
       tipFn: i => `<div class="t">${hhmmss(xs[i])} UTC</div>` + trow(css('--series-up'), 'Ping', ys[i] == null ? 'gagal' : msf(ys[i]) + ' ms') });
   }
@@ -492,15 +492,19 @@ function renderBt(B){
   let h = `<div class="sub" style="margin-top:10px">${num(R.windows)} round (${assets}) · UP menang ${pct(R.up_win_rate)} · ${R.shares} share/trade · jeda order ${R.latency_ms} ms ·
     pengaturan dipilih di ${num(R.train_windows)} round pertama (TRAIN), dinilai di ${num(R.test_windows)} round terakhir (TEST) · ${R.combos} kombinasi</div>`;
   if (R.windows < 200) h += `<div class="verdict no" style="border-color:rgba(251,179,21,.6);background:rgba(251,179,21,.07)"><span class="ic" style="background:var(--warning);color:#0b0b0b">!</span><div><b>Data masih sedikit</b><div class="sub">Kurang dari 200 round, hasil belum bisa dipercaya. Biarkan perekam berjalan 2–3 hari.</div></div></div>`;
-  h += R.any_profitable
+  const thin = R.families.filter(f => !f.ok && f.top[0] && f.top[0].test.pnl > 0 && f.top[0].test.trades > 0);
+  h += !R.any_profitable && thin.length
+    ? `<div class="verdict no" style="border-color:rgba(251,179,21,.6);background:rgba(251,179,21,.07)"><span class="ic" style="background:var(--warning);color:#0b0b0b">!</span><div><b>Ada hasil positif, tapi belum cukup trade untuk dipercaya</b><div class="sub">${thin.map(f => esc(SHORT[R.families.indexOf(f)] || f.name) + ': ' + money(f.top[0].test.pnl) + ' dari ' + f.top[0].test.trades + ' trade').join(' · ')}. Butuh ≥ 20 trade di TEST (dan idealnya ≥ 1.000 round). Jangan pakai uang asli dulu.</div></div></div>`
+    : R.any_profitable
     ? `<div class="verdict ok"><span class="ic">✓</span><div><b>Ada strategi yang untung di data TEST</b><div class="sub">Tetap kumpulkan ≥ 1.000 round dan pastikan hasilnya bertahan sebelum mempertimbangkan uang asli, mulai dari ukuran minimum.</div></div></div>`
     : `<div class="verdict no"><span class="ic">✕</span><div><b>Belum ada strategi yang untung di data TEST</b><div class="sub">Jangan pakai uang asli. Pengaturan terbaik di TRAIN tidak bertahan di data yang belum pernah dilihat.</div></div></div>`;
   h += `<div class="bars" id="bars"></div><div class="legend" style="margin-top:4px"><span><span class="sw" style="background:var(--pos)"></span>untung</span><span><span class="sw" style="background:var(--neg)"></span>rugi</span><span class="sub">pengaturan terbaik di TRAIN per strategi, dinilai di TEST</span></div>`;
   R.families.forEach((f, i) => {
-    const none = !f.top[0] || f.top[0].test.trades === 0;
+    const b = f.top[0] && f.top[0].test, none = !b || b.trades === 0;
     const chip = f.ok ? '<span class="chip good">✓ untung di TEST</span>'
       : none ? '<span class="chip" style="color:var(--text-secondary)">– belum ada trade di TEST</span>'
-      : '<span class="chip crit">✕ tidak untung</span>';
+      : b.pnl > 0 ? `<span class="chip warn">! positif, tapi baru ${b.trades} trade (butuh ≥ 20)</span>`
+      : '<span class="chip crit">✕ rugi di TEST</span>';
     h += `<div class="fam"><h3>${esc(SHORT[i] || f.name)} ${chip}</h3><div class="tblwrap"><table>
       <tr><th>Pengaturan (5 terbaik di TRAIN)</th><th>Train trade</th><th>Train PnL</th><th>Test trade</th><th>Test menang</th><th>Test PnL</th><th>Rugi terbesar</th><th>Drawdown</th></tr>` +
       f.top.map(t => `<tr><td>${esc(t.params)}</td><td>${t.train.trades}</td><td class="${cls(t.train.pnl)}">${money(t.train.pnl)}</td>
