@@ -60,6 +60,14 @@
   .tile .k{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
   .tile .v{font:700 26px/1.15 var(--sans);margin-top:6px}
   .tile .s{font-size:12px;color:var(--text-faint);margin-top:2px}
+  /* network */
+  .net{display:grid;grid-template-columns:minmax(260px,1fr) 2.2fr;gap:18px;align-items:start}
+  .nstats{display:grid;grid-template-columns:1fr 1fr;gap:14px 12px}
+  .nstats .k{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
+  .nstats .v{font:700 24px/1.15 var(--sans);margin-top:4px;font-variant-numeric:tabular-nums}
+  .nstats .v small{font-size:13px;font-weight:600;color:var(--text-secondary);margin-left:3px}
+  .pingchart{height:190px}
+  @media (max-width:860px){.net{grid-template-columns:1fr}}
   /* markets */
   .markets{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
   .mkt{cursor:pointer;transition:transform .15s, box-shadow .15s}
@@ -136,6 +144,7 @@
     <span class="tag">research · read-only · tanpa order</span>
     <span class="grow"></span>
     <span class="pill" id="feed"><span class="dot"></span><span id="feedtxt">CONNECTING</span></span>
+    <span class="clock" id="hping"></span>
     <span class="clock" id="clock"></span>
   </header>
 
@@ -146,6 +155,27 @@
     <div class="card tile"><div class="k">Pesan / detik</div><div class="v" id="t-msg">–</div><div class="s">WebSocket</div></div>
     <div class="card tile"><div class="k">Uptime</div><div class="v" id="t-up">–</div><div class="s">perekam</div></div>
     <div class="card tile"><div class="k">Data</div><div class="v" id="t-data">–</div><div class="s">di VPS</div></div>
+  </div>
+
+  <h2>Koneksi VPS → server Polymarket</h2>
+  <div class="card net">
+    <div>
+      <div class="nstats">
+        <div><div class="k">Ping sekarang</div><div class="v" id="p-now">–</div></div>
+        <div><div class="k">Penilaian</div><div style="margin-top:8px" id="p-chip">–</div></div>
+        <div><div class="k">Median 1 jam</div><div class="v" id="p-med">–</div></div>
+        <div><div class="k">P95 1 jam</div><div class="v" id="p-p95">–</div></div>
+        <div><div class="k">Koneksi baru</div><div class="v" id="p-cold">–</div></div>
+        <div><div class="k">Gagal 1 jam</div><div class="v" id="p-fail">–</div></div>
+      </div>
+      <div class="sub" style="margin-top:12px">Waktu bolak-balik HTTPS ke <b id="p-host">clob.polymarket.com</b> lewat koneksi
+        yang tetap terbuka, persis cara bot mengirim order. Diukur tiap 5 detik. "Koneksi baru" = membuka koneksi
+        dari nol (TCP + TLS), diukur tiap 10 menit. Server order Polymarket ada di London.</div>
+    </div>
+    <div>
+      <div class="legend"><span class="sub">Ping (ms) · 1 jam terakhir · arahkan kursor/jari ke grafik</span></div>
+      <div class="chart pingchart" id="pingchart"></div>
+    </div>
   </div>
 
   <h2>Live market · Σ ask (UP + DOWN)</h2>
@@ -223,7 +253,7 @@ function lineChart(el, opt){
   let s = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">`;
   for (const v of (opt.yTicks || [])) {
     s += `<line x1="${p.l}" x2="${W-p.r}" y1="${sy(v)}" y2="${sy(v)}" stroke="${css('--grid')}" stroke-width="1"/>`;
-    s += `<text x="${p.l-6}" y="${sy(v)+4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="end" font-family="system-ui">${v.toFixed(2)}</text>`;
+    s += `<text x="${p.l-6}" y="${sy(v)+4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="end" font-family="system-ui">${(opt.yFmt || (x => x.toFixed(2)))(v)}</text>`;
   }
   for (const g of (opt.grid || [])) {
     s += `<line x1="${p.l}" x2="${W-p.r}" y1="${sy(g)}" y2="${sy(g)}" stroke="${css('--grid')}" stroke-width="1"/>`;
@@ -234,7 +264,7 @@ function lineChart(el, opt){
   }
   if (opt.xTicks) {
     for (let i = 0; i <= 4; i++) { const t = x0 + (x1 - x0) * i / 4;
-      s += `<text x="${sx(t)}" y="${H-4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="${i===0?'start':i===4?'end':'middle'}" font-family="system-ui">${hhmmss(t).slice(3)}</text>`; }
+      s += `<text x="${sx(t)}" y="${H-4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="${i===0?'start':i===4?'end':'middle'}" font-family="system-ui">${(opt.xFmt || (x => hhmmss(x).slice(3)))(t)}</text>`; }
     s += `<line x1="${p.l}" x2="${W-p.r}" y1="${H-p.b}" y2="${H-p.b}" stroke="${css('--axis')}" stroke-width="1"/>`;
   }
   for (const se of opt.series) {
@@ -332,8 +362,43 @@ function renderLab(L){
           trow(null, 'UP ask', px(h[i][1])) + trow(null, 'DOWN ask', px(h[i][2])) });
     }
   });
+  renderPing(L);
   renderDetail(mk.find(m => m.slug === SEL));
   renderOutcomes(L.outcomes);
+}
+
+const q = (arr, p) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y);
+  return a[Math.min(a.length - 1, Math.floor(p * (a.length - 1) + 0.5))]; };
+const msf = v => v == null ? '–' : v < 10 ? v.toFixed(1) : Math.round(v).toString();
+function renderPing(L){
+  const h = L.ping_hist || [];
+  const ok = h.map(p => p[1]).filter(v => v != null);
+  const now = L.ping_ms, med = q(ok, 0.5), p95 = q(ok, 0.95), fails = h.length - ok.length;
+  $('p-now').innerHTML = now == null ? '–' : `${msf(now)}<small>ms</small>`;
+  $('p-med').innerHTML = med == null ? '–' : `${msf(med)}<small>ms</small>`;
+  $('p-p95').innerHTML = p95 == null ? '–' : `${msf(p95)}<small>ms</small>`;
+  $('p-cold').innerHTML = L.ping_cold_ms == null ? '–' : `${msf(L.ping_cold_ms)}<small>ms</small>`;
+  $('p-fail').textContent = h.length ? fails : '–';
+  if (L.ping_host) $('p-host').textContent = L.ping_host;
+  const ref = med == null ? now : med;
+  $('p-chip').innerHTML = ref == null ? '<span class="chip crit">✕ tidak terhubung</span>'
+    : ref < 15 ? '<span class="chip good">✓ sangat cepat</span>'
+    : ref < 50 ? '<span class="chip good">✓ baik</span>'
+    : ref < 120 ? '<span class="chip warn">! sedang</span>'
+    : '<span class="chip crit">✕ lambat</span>';
+  $('hping').textContent = now == null ? 'ping –' : `ping ${msf(now)} ms`;
+  if (h.length > 1) {
+    const xs = h.map(p => p[0]), ys = h.map(p => p[1]);
+    // show real spikes; only clip extreme outliers (tooltip still shows the true value)
+    const top = Math.max(10, Math.min(Math.max(...ok, 0), Math.max(200, (p95 || 10) * 4)) * 1.05);
+    const step = top > 400 ? 200 : top > 200 ? 100 : top > 80 ? 40 : top > 40 ? 20 : top > 20 ? 10 : 5;
+    const yMax = Math.ceil(top / step) * step, ticks = [];
+    for (let v = 0; v <= yMax + 1e-9; v += step) ticks.push(v);
+    lineChart($('pingchart'), { xs, yMin: 0, yMax, yTicks: ticks, xTicks: true, pad: { l: 40, r: 10, t: 8, b: 22 },
+      yFmt: v => v.toFixed(0), xFmt: t => hhmmss(t).slice(0, 5),
+      series: [{ ys, color: css('--series-up'), name: 'ping' }],
+      tipFn: i => `<div class="t">${hhmmss(xs[i])} UTC</div>` + trow(css('--series-up'), 'Ping', ys[i] == null ? 'gagal' : msf(ys[i]) + ' ms') });
+  }
 }
 
 function renderDetail(m){

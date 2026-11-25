@@ -507,6 +507,7 @@ pub async fn run() -> Result<()> {
     let mut outcomes_total = load_past_outcomes(&cfg.dir.join("outcomes.csv"), &lab_state);
     let bt: Shared<BtState> = Arc::new(Mutex::new(BtState::default()));
     lab::start(Arc::clone(&lab_state), bt, cfg.dir.clone());
+    lab::spawn_ping(Arc::clone(&lab_state), cfg.clob_host.clone());
 
     let mut books = Books::default();
     let mut rows_total = 0u64;

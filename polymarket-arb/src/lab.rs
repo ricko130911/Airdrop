@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State as AxState;
@@ -64,9 +64,24 @@ pub struct LabState {
     pub markets: Vec<LiveMarket>,
     /// newest last
     pub outcomes: VecDeque<OutcomeOut>,
+    /// HTTPS round trip to the CLOB over a kept-alive connection (what an order costs), ms
+    pub ping_ms: Option<f64>,
+    /// time to open a fresh connection (TCP + TLS + request), ms, refreshed every 10 min
+    pub ping_cold_ms: Option<f64>,
+    pub ping_host: String,
+    /// (unix s, ms) every 5 s, last hour
+    pub ping_hist: VecDeque<(i64, Option<f64>)>,
 }
 
 impl LabState {
+    pub fn push_ping(&mut self, t: i64, ms: Option<f64>) {
+        if self.ping_hist.len() == 720 {
+            self.ping_hist.pop_front();
+        }
+        self.ping_hist.push_back((t, ms));
+        self.ping_ms = ms;
+    }
+
     pub fn push_outcome(&mut self, o: OutcomeOut) {
         if self.outcomes.len() == 120 {
             self.outcomes.pop_front();
@@ -197,6 +212,51 @@ pub fn spawn(lab: Shared<LabState>, bt: Shared<BtState>, dir: PathBuf, port: u16
     });
 }
 
+fn http_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .tcp_nodelay(true)
+        .pool_idle_timeout(None)
+        .tcp_keepalive(Duration::from_secs(15))
+        .timeout(Duration::from_secs(5))
+        .build()
+}
+
+async fn time_get(client: &reqwest::Client, url: &str) -> Option<f64> {
+    let t = Instant::now();
+    let r = client.get(url).send().await.ok()?;
+    r.bytes().await.ok()?;
+    Some(t.elapsed().as_secs_f64() * 1000.0)
+}
+
+/// Measures the VPS -> Polymarket CLOB round trip every 5 s (warm connection, like orders)
+/// and a fresh-connection time every 10 minutes.
+pub fn spawn_ping(lab: Shared<LabState>, host: String) {
+    tokio::spawn(async move {
+        let url = format!("{}/time", host.trim_end_matches('/'));
+        lab.lock().unwrap().ping_host = host.trim_start_matches("https://").trim_end_matches('/').to_owned();
+        let Ok(warm) = http_client() else { return };
+        let mut tick = tokio::time::interval(Duration::from_secs(5));
+        let mut n = 0u64;
+        loop {
+            tick.tick().await;
+            if n % 120 == 0 {
+                // fresh client = new TCP + TLS handshake
+                if let Ok(cold) = http_client() {
+                    let ms = time_get(&cold, &url).await;
+                    lab.lock().unwrap().ping_cold_ms = ms;
+                }
+                if n == 0 {
+                    // open the warm connection; its first request includes the handshake
+                    let _ = time_get(&warm, &url).await;
+                }
+            }
+            n += 1;
+            let ms = time_get(&warm, &url).await;
+            lab.lock().unwrap().push_ping(now_ms() / 1000, ms);
+        }
+    });
+}
+
 /// Starts the server from WEB_* env vars, plus an automatic backtest every 30 minutes.
 pub fn start(lab: Shared<LabState>, bt: Shared<BtState>, dir: PathBuf) {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
@@ -254,6 +314,12 @@ pub async fn demo(dir: PathBuf) -> anyhow::Result<()> {
         }
         l.resolved = 2_163;
         l.data_bytes = 187_400_000;
+        l.ping_host = "clob.polymarket.com".into();
+        l.ping_cold_ms = Some(118.4);
+        for k in (0..720).rev() {
+            let spike = if rnd() < 0.03 { 25.0 + rnd() * 60.0 } else { 0.0 };
+            l.push_ping(now - k * 5, Some(34.0 + rnd() * 6.0 + spike));
+        }
     }
     let mut prefilled = false;
     loop {
@@ -303,6 +369,10 @@ pub async fn demo(dir: PathBuf) -> anyhow::Result<()> {
             .collect();
         {
             let mut l = lab.lock().unwrap();
+            if now % 5 == 0 {
+                let spike = if rnd() < 0.03 { 25.0 + rnd() * 60.0 } else { 0.0 };
+                l.push_ping(now, Some(34.0 + rnd() * 6.0 + spike));
+            }
             l.markets = markets;
             l.rows = rows;
             l.msgs_per_sec = 600 + (rnd() * 300.0) as u64;
