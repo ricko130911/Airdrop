@@ -1,0 +1,37 @@
+[package]
+name = "polymarket-arb"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Low-latency Polymarket UP/DOWN complete-set arbitrage bot"
+license = "MIT"
+
+[dependencies]
+polymarket_client_sdk_v2 = { version = "0.9.1", features = ["clob", "gamma"] }
+alloy-signer-local = "1.6"
+tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "net"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dotenvy = "0.15"
+mimalloc = { version = "0.1", default-features = false }
+ratatui = "0.30"
+crossterm = "0.29"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true

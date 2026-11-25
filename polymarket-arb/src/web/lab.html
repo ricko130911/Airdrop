@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b16">
+<title>POLY//LAB · Research</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --page:#070b16; --surface-1:#0f1a2e; --surface-2:#132037;
+    --text-primary:#e6edf7; --text-secondary:#8b9ab3; --text-faint:#5d6c86;
+    --grid:#22314d; --axis:#3a4d70; --ring:rgba(120,190,255,.16);
+    --neon:#3ee8ff; --neon-2:#a78bfa;
+    /* data (validated on --surface-1, dark mode) */
+    --series-up:#338ced; --series-down:#e76624;
+    --pos:#338ced; --neg:#eb6263;
+    /* status: always with icon + label */
+    --good:#0aac23; --warning:#fbb315; --critical:#dc3c3d;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono: ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--page);color:var(--text-primary);font:14px/1.45 var(--sans)}
+  body{min-height:100vh;
+    background:
+      radial-gradient(900px 500px at 10% -10%, rgba(62,232,255,.10), transparent 60%),
+      radial-gradient(800px 600px at 110% 10%, rgba(167,139,250,.10), transparent 60%),
+      linear-gradient(rgba(120,190,255,.035) 1px, transparent 1px) 0 0/100% 32px,
+      linear-gradient(90deg, rgba(120,190,255,.035) 1px, transparent 1px) 0 0/32px 100%,
+      var(--page);}
+  .wrap{max-width:1360px;margin:0 auto;padding:18px 18px 40px}
+  /* header */
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+  .logo{font:800 26px/1 var(--mono);letter-spacing:.06em;
+    background:linear-gradient(90deg,var(--neon),var(--neon-2));-webkit-background-clip:text;background-clip:text;color:transparent;
+    filter:drop-shadow(0 0 14px rgba(62,232,255,.35))}
+  .tag{font:600 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);
+    border:1px solid var(--ring);padding:6px 9px;border-radius:999px;background:rgba(15,26,46,.6)}
+  .grow{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:8px;font:600 12px var(--mono);letter-spacing:.08em;
+    padding:7px 12px;border-radius:999px;border:1px solid var(--ring);background:rgba(15,26,46,.75)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(10,172,35,.6);animation:pulse 1.8s infinite}
+  .pill.bad .dot{background:var(--critical);animation:none}
+  .pill.demo .dot{background:var(--warning)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(10,172,35,.55)}70%{box-shadow:0 0 0 9px rgba(10,172,35,0)}100%{box-shadow:0 0 0 0 rgba(10,172,35,0)}}
+  .clock{font:500 12px var(--mono);color:var(--text-secondary);font-variant-numeric:tabular-nums}
+  /* cards */
+  .card{position:relative;background:linear-gradient(180deg,rgba(19,32,55,.92),rgba(15,26,46,.92));
+    border:1px solid var(--ring);border-radius:14px;padding:14px 16px;
+    box-shadow:0 0 0 1px rgba(62,232,255,.03) inset, 0 10px 30px rgba(0,0,0,.35)}
+  .card::before{content:"";position:absolute;inset:-1px;border-radius:14px;pointer-events:none;
+    background:linear-gradient(120deg,rgba(62,232,255,.35),transparent 30%,transparent 70%,rgba(167,139,250,.30));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;padding:1px;opacity:.55}
+  h2{font:700 12px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--text-secondary);margin:26px 0 10px;display:flex;align-items:center;gap:10px}
+  h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--ring),transparent)}
+  .sub{color:var(--text-secondary);font-size:12px}
+  /* stat tiles */
+  .tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+  .tile .k{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
+  .tile .v{font:700 26px/1.15 var(--sans);margin-top:6px}
+  .tile .s{font-size:12px;color:var(--text-faint);margin-top:2px}
+  /* network */
+  .net{display:grid;grid-template-columns:minmax(260px,1fr) 2.2fr;gap:18px;align-items:start}
+  .nstats{display:grid;grid-template-columns:1fr 1fr;gap:14px 12px}
+  .nstats .k{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
+  .nstats .v{font:700 24px/1.15 var(--sans);margin-top:4px;font-variant-numeric:tabular-nums}
+  .nstats .v small{font-size:13px;font-weight:600;color:var(--text-secondary);margin-left:3px}
+  .pingchart{height:190px}
+  @media (max-width:860px){.net{grid-template-columns:1fr}}
+  /* markets */
+  .markets{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .mkt{cursor:pointer;transition:transform .15s, box-shadow .15s}
+  .mkt:hover{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(62,232,255,.25) inset,0 12px 34px rgba(0,0,0,.45),0 0 24px rgba(62,232,255,.08)}
+  .mkt.ended{opacity:.5}
+  .mkt.sel{box-shadow:0 0 0 1px rgba(62,232,255,.55) inset,0 0 30px rgba(62,232,255,.14)}
+  .mhead{display:flex;align-items:center;gap:8px}
+  .asset{font:800 13px var(--mono);letter-spacing:.1em}
+  .win{font:500 12px var(--mono);color:var(--text-secondary)}
+  .cd{margin-left:auto;font:600 12px var(--mono);font-variant-numeric:tabular-nums;color:var(--text-secondary);
+    border:1px solid var(--ring);border-radius:6px;padding:2px 7px}
+  .sigma{display:flex;align-items:baseline;gap:10px;margin:8px 0 2px}
+  .sigma .v{font:700 30px/1 var(--sans)}
+  .sigma .l{font:600 11px var(--mono);color:var(--text-secondary);letter-spacing:.1em}
+  .legs{font-size:12px;color:var(--text-secondary);display:flex;gap:14px;font-variant-numeric:tabular-nums}
+  .sw{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+  .chip{display:inline-flex;align-items:center;gap:5px;font:700 11px var(--mono);padding:3px 8px;border-radius:999px;
+    border:1px solid currentColor}
+  .chip.warn{color:var(--warning)} .chip.good{color:var(--good)} .chip.crit{color:var(--critical)}
+  .spark{position:relative;height:74px;margin-top:8px}
+  .spark svg,.chart svg{display:block;width:100%;height:100%;overflow:visible}
+  .xh{position:absolute;top:0;bottom:0;width:1px;background:rgba(230,237,247,.35);pointer-events:none;display:none}
+  .xd{position:absolute;width:9px;height:9px;border-radius:50%;border:2px solid var(--surface-1);margin:-4.5px 0 0 -4.5px;pointer-events:none;display:none}
+  /* detail */
+  .detail{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+  .chart{position:relative;height:280px}
+  .legend{display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin:2px 0 8px;flex-wrap:wrap}
+  .legend .sw{width:14px;height:3px}
+  .kv{display:grid;grid-template-columns:1fr auto;gap:8px 12px;font-variant-numeric:tabular-nums}
+  .kv .k{color:var(--text-secondary)}
+  /* outcomes */
+  .orow{display:flex;align-items:center;gap:10px;margin:6px 0}
+  .orow .a{width:42px;font:800 12px var(--mono);letter-spacing:.08em}
+  .cells{display:flex;gap:3px;flex-wrap:wrap}
+  .cell{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;font:800 11px var(--mono);color:#fff;cursor:default}
+  .cell.u{background:var(--series-up)} .cell.d{background:var(--series-down)}
+  .orate{margin-left:auto;font-size:12px;color:var(--text-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}
+  /* backtest */
+  .btbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  button{font:700 12px var(--mono);letter-spacing:.08em;color:#07101f;background:linear-gradient(90deg,var(--neon),var(--neon-2));
+    border:0;border-radius:10px;padding:10px 14px;cursor:pointer;box-shadow:0 0 18px rgba(62,232,255,.25)}
+  button:disabled{opacity:.5;cursor:progress}
+  .verdict{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;margin:12px 0;border:1px solid}
+  .verdict.ok{border-color:rgba(10,172,35,.6);background:rgba(10,172,35,.08)}
+  .verdict.no{border-color:rgba(220,60,61,.6);background:rgba(220,60,61,.08)}
+  .verdict .ic{font:800 15px var(--mono);width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;flex:none}
+  .verdict.ok .ic{background:var(--good)} .verdict.no .ic{background:var(--critical)}
+  .bars{position:relative}
+  .bars svg{display:block;width:100%;height:auto;overflow:visible}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+  th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap}
+  th{font:600 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-secondary)}
+  th:first-child,td:first-child{text-align:left}
+  .fam{margin-top:14px} .fam h3{font:700 13px var(--sans);margin:0 0 6px}
+  .tblwrap{overflow-x:auto}
+  .pos::before{content:"▲ ";font-size:9px} .neg::before{content:"▼ ";font-size:9px}
+  /* tooltip */
+  #tip{position:fixed;z-index:10;pointer-events:none;display:none;min-width:150px;
+    background:rgba(9,15,28,.96);border:1px solid rgba(62,232,255,.35);border-radius:10px;padding:8px 10px;font-size:12px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font-variant-numeric:tabular-nums}
+  #tip .t{font:600 11px var(--mono);color:var(--text-secondary);margin-bottom:4px}
+  #tip .r{display:flex;align-items:center;gap:8px;justify-content:space-between}
+  footer{margin-top:28px;color:var(--text-faint);font:500 11px var(--mono);letter-spacing:.06em;text-align:center}
+  @media (max-width:1100px){.tiles{grid-template-columns:repeat(3,1fr)}.markets{grid-template-columns:repeat(2,1fr)}.detail{grid-template-columns:1fr}}
+  @media (max-width:640px){.wrap{padding:12px 10px 30px}.tiles{grid-template-columns:repeat(2,1fr)}.markets{grid-template-columns:1fr}
+    .logo{font-size:21px}.tile .v{font-size:22px}.chart{height:220px}.cell{width:19px;height:19px;font-size:10px}}
+  @media (prefers-reduced-motion:reduce){.dot{animation:none}.mkt{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">POLY//LAB</div>
+    <span class="tag">research · read-only · tanpa order</span>
+    <span class="grow"></span>
+    <span class="pill" id="feed"><span class="dot"></span><span id="feedtxt">CONNECTING</span></span>
+    <span class="clock" id="hping"></span>
+    <span class="clock" id="clock"></span>
+  </header>
+
+  <div class="tiles">
+    <div class="card tile"><div class="k">Market direkam</div><div class="v" id="t-mk">–</div><div class="s" id="t-mk2">&nbsp;</div></div>
+    <div class="card tile"><div class="k">Baris orderbook</div><div class="v" id="t-rows">–</div><div class="s">sejak start</div></div>
+    <div class="card tile"><div class="k">Round selesai</div><div class="v" id="t-res">–</div><div class="s">dengan pemenang</div></div>
+    <div class="card tile"><div class="k">Pesan / detik</div><div class="v" id="t-msg">–</div><div class="s">WebSocket</div></div>
+    <div class="card tile"><div class="k">Uptime</div><div class="v" id="t-up">–</div><div class="s">perekam</div></div>
+    <div class="card tile"><div class="k">Data</div><div class="v" id="t-data">–</div><div class="s">di VPS</div></div>
+  </div>
+
+  <h2>Koneksi VPS → server Polymarket</h2>
+  <div class="card net">
+    <div>
+      <div class="nstats">
+        <div><div class="k">Ping sekarang</div><div class="v" id="p-now">–</div></div>
+        <div><div class="k">Penilaian</div><div style="margin-top:8px" id="p-chip">–</div></div>
+        <div><div class="k">Median 1 jam</div><div class="v" id="p-med">–</div></div>
+        <div><div class="k">P95 1 jam</div><div class="v" id="p-p95">–</div></div>
+        <div><div class="k">Koneksi baru</div><div class="v" id="p-cold">–</div></div>
+        <div><div class="k">Gagal 1 jam</div><div class="v" id="p-fail">–</div></div>
+      </div>
+      <div class="sub" style="margin-top:12px">Waktu bolak-balik HTTPS ke <b id="p-host">clob.polymarket.com</b> lewat koneksi
+        yang tetap terbuka, persis cara bot mengirim order. Diukur tiap 5 detik. "Koneksi baru" = membuka koneksi
+        dari nol (TCP + TLS), diukur tiap 10 menit. Server order Polymarket ada di London.</div>
+    </div>
+    <div>
+      <div class="legend"><span class="sub">Ping (ms) · 1 jam terakhir · arahkan kursor/jari ke grafik</span></div>
+      <div class="chart pingchart" id="pingchart"></div>
+    </div>
+  </div>
+
+  <h2>Live market · Σ ask (UP + DOWN)</h2>
+  <div class="markets" id="markets"></div>
+
+  <h2>Detail · harga ask UP vs DOWN</h2>
+  <div class="detail">
+    <div class="card">
+      <div class="mhead"><span class="asset" id="d-title">–</span><span class="win" id="d-slug"></span></div>
+      <div class="legend"><span><span class="sw" style="background:var(--series-up)"></span>UP ask</span>
+        <span><span class="sw" style="background:var(--series-down)"></span>DOWN ask</span>
+        <span class="sub">5 menit terakhir · arahkan kursor/jari ke grafik</span></div>
+      <div class="chart" id="detail"></div>
+    </div>
+    <div class="card">
+      <div class="asset" style="margin-bottom:10px">Orderbook sekarang</div>
+      <div class="kv" id="d-kv"></div>
+      <div class="sub" style="margin-top:12px">Arbitrase dua arah butuh Σ ask + fee ≤ 0,98. Data ini hanya dipantau,
+        bot <b>tidak</b> mengirim order.</div>
+    </div>
+  </div>
+
+  <h2>Pemenang round terakhir</h2>
+  <div class="card">
+    <div class="legend"><span><span class="cell u" style="display:inline-grid;width:16px;height:16px;font-size:9px">U</span> UP menang</span>
+      <span><span class="cell d" style="display:inline-grid;width:16px;height:16px;font-size:9px">D</span> DOWN menang</span>
+      <span class="sub">kanan = terbaru</span></div>
+    <div id="outcomes"><div class="sub">Menunggu round pertama selesai…</div></div>
+  </div>
+
+  <h2>Backtest · strategi dua arah dengan data asli</h2>
+  <div class="card">
+    <div class="btbar">
+      <button id="run">▶ JALANKAN BACKTEST</button>
+      <span class="sub" id="bt-status">Memuat…</span>
+    </div>
+    <div id="bt"></div>
+  </div>
+
+  <footer>POLY//LAB · perekam read-only · tidak ada wallet, tidak ada order · <span id="f-demo"></span></footer>
+</div>
+<div id="tip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const px = v => v == null ? '–' : (Math.round(v*1000) % 10 ? v.toFixed(3) : v.toFixed(2));
+const num = n => n == null ? '–' : n.toLocaleString('id-ID');
+const money = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toFixed(2);
+const pct = v => Math.round(v*100) + '%';
+const dur = s => { s = Math.max(0, s|0); const d = s/86400|0, h = (s/3600|0)%24, m = (s/60|0)%60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s%60}s`; };
+const bytes = b => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : (b/1e3|0)+' KB';
+const hhmmss = t => new Date(t*1000).toISOString().slice(11,19);
+const sigma = (u, d) => (u == null || d == null) ? null : u + d;
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+let LAB = null, SEL = null, PICKED = false, skew = 0;
+const tip = $('tip');
+function showTip(x, y, html){ tip.innerHTML = html; tip.style.display = 'block';
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(window.innerWidth - w - 8, x + 14) + 'px';
+  tip.style.top = Math.max(8, y - h - 12) + 'px'; }
+function hideTip(){ tip.style.display = 'none'; }
+const trow = (sw, k, v) => `<div class="r"><span>${sw ? `<span class="sw" style="background:${sw}"></span>` : ''}${k}</span><b>${v}</b></div>`;
+
+/* ---------- generic line chart (SVG + hover crosshair) ---------- */
+function lineChart(el, opt){
+  // opt: {xs, series:[{ys,color,name}], yMin, yMax, refs:[{y,label}], yTicks:[], xTicks:bool, pad, tipFn}
+  const W = el.clientWidth || 300, H = el.clientHeight || 100;
+  const p = Object.assign({l: 0, r: 0, t: 6, b: 4}, opt.pad || {});
+  const x0 = opt.xs[0], x1 = opt.xs[opt.xs.length-1];
+  const sx = t => p.l + (x1 === x0 ? 0 : (t - x0) / (x1 - x0)) * (W - p.l - p.r);
+  const sy = v => p.t + (1 - (v - opt.yMin) / (opt.yMax - opt.yMin)) * (H - p.t - p.b);
+  let s = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">`;
+  for (const v of (opt.yTicks || [])) {
+    s += `<line x1="${p.l}" x2="${W-p.r}" y1="${sy(v)}" y2="${sy(v)}" stroke="${css('--grid')}" stroke-width="1"/>`;
+    s += `<text x="${p.l-6}" y="${sy(v)+4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="end" font-family="system-ui">${(opt.yFmt || (x => x.toFixed(2)))(v)}</text>`;
+  }
+  for (const g of (opt.grid || [])) {
+    s += `<line x1="${p.l}" x2="${W-p.r}" y1="${sy(g)}" y2="${sy(g)}" stroke="${css('--grid')}" stroke-width="1"/>`;
+  }
+  for (const r of (opt.refs || [])) {
+    s += `<line x1="${p.l}" x2="${W-p.r}" y1="${sy(r.y)}" y2="${sy(r.y)}" stroke="${css('--text-secondary')}" stroke-width="1" stroke-dasharray="4 4" opacity=".8"/>`;
+    s += `<text x="${W-p.r-2}" y="${sy(r.y)+12}" fill="${css('--text-secondary')}" font-size="10.5" text-anchor="end" font-family="system-ui">${r.label}</text>`;
+  }
+  if (opt.xTicks) {
+    for (let i = 0; i <= 4; i++) { const t = x0 + (x1 - x0) * i / 4;
+      s += `<text x="${sx(t)}" y="${H-4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="${i===0?'start':i===4?'end':'middle'}" font-family="system-ui">${(opt.xFmt || (x => hhmmss(x).slice(3)))(t)}</text>`; }
+    s += `<line x1="${p.l}" x2="${W-p.r}" y1="${H-p.b}" y2="${H-p.b}" stroke="${css('--axis')}" stroke-width="1"/>`;
+  }
+  for (const se of opt.series) {
+    let d = '', pen = false;
+    opt.xs.forEach((t, i) => { const v = se.ys[i];
+      if (v == null || !isFinite(v)) { pen = false; return; }
+      const vv = Math.max(opt.yMin, Math.min(opt.yMax, v));
+      d += (pen ? 'L' : 'M') + sx(t).toFixed(1) + ',' + sy(vv).toFixed(1); pen = true; });
+    s += `<path d="${d}" fill="none" stroke="${se.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (se.endLabel) { const i = se.ys.length - 1, v = se.ys[i];
+      if (v != null) s += `<text x="${sx(opt.xs[i]) + 6}" y="${sy(v)+4}" fill="${css('--text-primary')}" font-size="11.5" font-weight="600" font-family="system-ui">${se.endLabel}</text>`; }
+  }
+  s += '</svg>';
+  // overlay (kept across redraws)
+  let ov = el.querySelector('.ov');
+  el.innerHTML = s;
+  if (!ov) { ov = document.createElement('div'); ov.className = 'ov';
+    ov.innerHTML = '<div class="xh"></div>' + opt.series.map(() => '<div class="xd"></div>').join(''); }
+  el.appendChild(ov);
+  el._chart = {opt, sx, sy, W, H, p};
+  if (!el._hover) {
+    el._hover = true;
+    const move = e => { const c = el._chart; if (!c) return; const o = c.opt;
+      const r = el.getBoundingClientRect(); const mx = (e.clientX - r.left) * (c.W / r.width);
+      let best = 0, bd = 1e9; o.xs.forEach((t, i) => { const dd = Math.abs(c.sx(t) - mx); if (dd < bd) { bd = dd; best = i; } });
+      const xh = el.querySelector('.xh'), dots = el.querySelectorAll('.xd');
+      const xpx = c.sx(o.xs[best]) * r.width / c.W;
+      xh.style.left = xpx + 'px'; xh.style.display = 'block';
+      o.series.forEach((se, k) => { const v = se.ys[best]; const dot = dots[k]; if (!dot) return;
+        if (v == null) { dot.style.display = 'none'; return; }
+        dot.style.display = 'block'; dot.style.background = se.color; dot.style.left = xpx + 'px';
+        dot.style.top = (c.sy(Math.max(o.yMin, Math.min(o.yMax, v))) * r.height / c.H) + 'px'; });
+      showTip(e.clientX, e.clientY, o.tipFn(best)); };
+    const leave = () => { hideTip(); el.querySelectorAll('.xh,.xd').forEach(n => n.style.display = 'none'); };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerdown', move);
+    el.addEventListener('pointerleave', leave);
+  }
+}
+
+/* ---------- live markets ---------- */
+function renderLab(L){
+  LAB = L;
+  const now = Date.now()/1000 + skew;
+  const feed = $('feed');
+  feed.className = 'pill' + (L.demo ? ' demo' : L.ws_ok ? '' : ' bad');
+  $('feedtxt').textContent = L.demo ? 'DEMO DATA' : L.ws_ok ? 'LIVE FEED' : 'RECONNECTING';
+  $('f-demo').textContent = L.demo ? 'mode demo (data simulasi)' : 'data asli dari Polymarket';
+  $('t-mk').textContent = L.markets.length;
+  $('t-mk2').textContent = (L.assets || []).join(' · ').toUpperCase() + ' · 5m';
+  $('t-rows').textContent = num(L.rows);
+  $('t-res').textContent = num(L.resolved);
+  $('t-msg').textContent = num(L.msgs_per_sec);
+  $('t-up').textContent = dur(Date.now()/1000 - L.started_ms/1000);
+  $('t-data').textContent = bytes(L.data_bytes || 0);
+
+  const ended = m => m.end_ts <= now;
+  const mk = [...L.markets].sort((a, b) => ended(a) - ended(b) || a.end_ts - b.end_ts || a.asset.localeCompare(b.asset));
+  if (!SEL || !mk.find(m => m.slug === SEL) || (!PICKED && ended(mk.find(m => m.slug === SEL)))) {
+    SEL = (mk.find(m => !ended(m)) || mk[0] || {}).slug; PICKED = false; }
+  const box = $('markets');
+  // keep card DOM stable (hover state survives refresh)
+  const keep = new Set(mk.map(m => m.slug));
+  [...box.children].forEach(c => { if (!keep.has(c.dataset.slug)) c.remove(); });
+  mk.forEach((m, i) => {
+    let c = box.querySelector(`[data-slug="${m.slug}"]`);
+    if (!c) { c = document.createElement('div'); c.className = 'card mkt'; c.dataset.slug = m.slug;
+      c.innerHTML = `<div class="mhead"><span class="asset"></span><span class="win"></span><span class="cd"></span></div>
+        <div class="sigma"><span class="v"></span><span class="l">Σ ASK</span><span class="flag"></span></div>
+        <div class="legs"></div><div class="spark"></div>`;
+      c.onclick = () => { SEL = m.slug; PICKED = true; renderLab(LAB); };
+    }
+    if (box.children[i] !== c) box.insertBefore(c, box.children[i] || null);
+    c.classList.toggle('sel', m.slug === SEL);
+    c.classList.toggle('ended', ended(m));
+    const left = m.end_ts - now, sg = sigma(m.up_ask, m.down_ask);
+    c.querySelector('.asset').textContent = m.asset.toUpperCase();
+    c.querySelector('.win').textContent = m.label.split(' ').slice(-1)[0] + (left > 300 ? ' · berikutnya' : '');
+    c.querySelector('.cd').textContent = left <= 0 ? 'SELESAI' : left > 300 ? `mulai ${dur(left-300)}` : `T-${left|0}s`;
+    c.querySelector('.sigma .v').textContent = sg == null ? '–' : sg.toFixed(3);
+    c.querySelector('.flag').innerHTML = sg != null && sg <= 0.98 ? '<span class="chip warn">⚡ Σ ≤ 0,98</span>' : '';
+    c.querySelector('.legs').innerHTML =
+      `<span><span class="sw" style="background:var(--series-up)"></span>UP ${px(m.up_ask)}</span>` +
+      `<span><span class="sw" style="background:var(--series-down)"></span>DOWN ${px(m.down_ask)}</span>` +
+      `<span>fee ${m.fee_rate}</span>`;
+    const h = m.history.slice(-300);
+    if (h.length > 1) {
+      const xs = h.map(p => p[0]), ys = h.map(p => sigma(p[1], p[2]));
+      const vals = ys.filter(v => v != null);
+      const lo = Math.min(0.94, Math.min(...vals) - 0.01), hi = Math.min(1.5, Math.max(1.06, Math.max(...vals) + 0.01));
+      lineChart(c.querySelector('.spark'), { xs, yMin: lo, yMax: hi,
+        series: [{ ys, color: css('--series-up'), name: 'Σ ask' }],
+        grid: [1.0], refs: [{ y: 0.98, label: 'target 0,98' }],
+        tipFn: i => `<div class="t">${m.asset.toUpperCase()} · ${hhmmss(xs[i])} UTC</div>` +
+          trow(css('--series-up'), 'Σ ask', ys[i] == null ? '–' : ys[i].toFixed(3)) +
+          trow(null, 'UP ask', px(h[i][1])) + trow(null, 'DOWN ask', px(h[i][2])) });
+    }
+  });
+  renderPing(L);
+  renderDetail(mk.find(m => m.slug === SEL));
+  renderOutcomes(L.outcomes);
+}
+
+const q = (arr, p) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y);
+  return a[Math.min(a.length - 1, Math.floor(p * (a.length - 1) + 0.5))]; };
+const msf = v => v == null ? '–' : v < 10 ? v.toFixed(1) : Math.round(v).toString();
+function renderPing(L){
+  const h = L.ping_hist || [];
+  const ok = h.map(p => p[1]).filter(v => v != null);
+  const now = L.ping_ms, med = q(ok, 0.5), p95 = q(ok, 0.95), fails = h.length - ok.length;
+  $('p-now').innerHTML = now == null ? '–' : `${msf(now)}<small>ms</small>`;
+  $('p-med').innerHTML = med == null ? '–' : `${msf(med)}<small>ms</small>`;
+  $('p-p95').innerHTML = p95 == null ? '–' : `${msf(p95)}<small>ms</small>`;
+  $('p-cold').innerHTML = L.ping_cold_ms == null ? '–' : `${msf(L.ping_cold_ms)}<small>ms</small>`;
+  $('p-fail').textContent = h.length ? fails : '–';
+  if (L.ping_host) $('p-host').textContent = L.ping_host;
+  const ref = med == null ? now : med;
+  $('p-chip').innerHTML = ref == null ? '<span class="chip crit">✕ tidak terhubung</span>'
+    : ref < 15 ? '<span class="chip good">✓ sangat cepat</span>'
+    : ref < 50 ? '<span class="chip good">✓ baik</span>'
+    : ref < 120 ? '<span class="chip warn">! sedang</span>'
+    : '<span class="chip crit">✕ lambat</span>';
+  $('hping').textContent = now == null ? 'ping –' : `ping ${msf(now)} ms`;
+  if (h.length > 1) {
+    const xs = h.map(p => p[0]), ys = h.map(p => p[1]);
+    // show real spikes; only clip extreme outliers (tooltip still shows the true value)
+    const top = Math.max(10, Math.min(Math.max(...ok, 0), Math.max(200, (p95 || 10) * 4)) * 1.05);
+    const step = top > 400 ? 200 : top > 200 ? 100 : top > 80 ? 40 : top > 40 ? 20 : top > 20 ? 10 : 5;
+    const yMax = Math.ceil(top / step) * step, ticks = [];
+    for (let v = 0; v <= yMax + 1e-9; v += step) ticks.push(v);
+    lineChart($('pingchart'), { xs, yMin: 0, yMax, yTicks: ticks, xTicks: true, pad: { l: 40, r: 10, t: 8, b: 22 },
+      yFmt: v => v.toFixed(0), xFmt: (xs[xs.length-1] - xs[0]) < 600 ? (t => hhmmss(t)) : (t => hhmmss(t).slice(0, 5)),
+      series: [{ ys, color: css('--series-up'), name: 'ping' }],
+      tipFn: i => `<div class="t">${hhmmss(xs[i])} UTC</div>` + trow(css('--series-up'), 'Ping', ys[i] == null ? 'gagal' : msf(ys[i]) + ' ms') });
+  }
+}
+
+function renderDetail(m){
+  const el = $('detail');
+  if (!m) { $('d-title').textContent = '–'; el.innerHTML = '<div class="sub">Menunggu market…</div>'; return; }
+  $('d-title').textContent = m.label.toUpperCase();
+  $('d-slug').textContent = m.slug;
+  const h = m.history.slice(-300);
+  if (h.length > 1) {
+    const xs = h.map(p => p[0]);
+    lineChart(el, { xs, yMin: 0, yMax: 1, yTicks: [0, 0.25, 0.5, 0.75, 1], xTicks: true, pad: { l: 40, r: 64, t: 8, b: 22 },
+      series: [
+        { ys: h.map(p => p[1]), color: css('--series-up'), name: 'UP', endLabel: 'UP ' + px(h[h.length-1][1]) },
+        { ys: h.map(p => p[2]), color: css('--series-down'), name: 'DOWN', endLabel: 'DOWN ' + px(h[h.length-1][2]) }],
+      tipFn: i => `<div class="t">${hhmmss(xs[i])} UTC</div>` +
+        trow(css('--series-up'), 'UP ask', px(h[i][1])) + trow(css('--series-down'), 'DOWN ask', px(h[i][2])) +
+        trow(null, 'Σ ask', sigma(h[i][1], h[i][2]) == null ? '–' : sigma(h[i][1], h[i][2]).toFixed(3)) });
+  }
+  const sg = sigma(m.up_ask, m.down_ask);
+  $('d-kv').innerHTML = [
+    ['UP bid / ask', `${px(m.up_bid)} / ${px(m.up_ask)}`], ['DOWN bid / ask', `${px(m.down_bid)} / ${px(m.down_ask)}`],
+    ['Σ ask', sg == null ? '–' : sg.toFixed(3)], ['Edge (1 − Σ)', sg == null ? '–' : (1 - sg >= 0 ? '+' : '−') + Math.abs(1 - sg).toFixed(3)],
+    ['Fee taker', m.fee_rate], ['Selesai', hhmmss(m.end_ts) + ' UTC']]
+    .map(([k, v]) => `<span class="k">${k}</span><b>${v}</b>`).join('');
+}
+
+function renderOutcomes(list){
+  if (!list || !list.length) return;
+  const by = {};
+  list.forEach(o => (by[o.asset] = by[o.asset] || []).push(o));
+  $('outcomes').innerHTML = Object.keys(by).sort().map(a => {
+    const xs = by[a].slice(-36), ups = xs.filter(o => o.winner === 'UP').length;
+    return `<div class="orow"><span class="a">${esc(a.toUpperCase())}</span><div class="cells">` +
+      xs.map(o => `<span class="cell ${o.winner === 'UP' ? 'u' : 'd'}" data-t="${o.end_ts}" data-w="${o.winner}">${o.winner === 'UP' ? 'U' : 'D'}</span>`).join('') +
+      `</div><span class="orate">UP ${ups}/${xs.length} (${pct(ups / xs.length)})</span></div>`; }).join('');
+}
+$('outcomes').addEventListener('pointermove', e => { const c = e.target.closest('.cell');
+  if (!c) return hideTip();
+  showTip(e.clientX, e.clientY, `<div class="t">Round selesai ${hhmmss(+c.dataset.t)} UTC</div>${trow(c.dataset.w === 'UP' ? css('--series-up') : css('--series-down'), 'Pemenang', c.dataset.w)}`); });
+$('outcomes').addEventListener('pointerleave', hideTip);
+
+/* ---------- backtest ---------- */
+const SHORT = ['A · Beli UP+DOWN bersamaan', 'B · Dua arah bertahap', 'C · Last cent'];
+function bars(el, fams){
+  const items = fams.map((f, i) => ({ name: SHORT[i] || f.name, best: f.top[0], fam: f })).filter(x => x.best);
+  const W = el.clientWidth || 600, narrow = W < 560;
+  const rowH = narrow ? 64 : 46, H = items.length * rowH + 26, labW = narrow ? 0 : Math.min(210, W * 0.38), padR = narrow ? 64 : 70;
+  const barOff = narrow ? 34 : 0;
+  // domain from the data itself (0 always included), with room for the value labels
+  const vals = items.map(x => x.best.test.pnl);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), span = Math.max(hi - lo, 1e-9);
+  const left = labW + (lo < 0 ? 66 : 4), right = W - (hi > 0 ? padR : 8);
+  const sx = v => left + (v - lo) / span * (right - left);
+  const zero = sx(0);
+  let s = `<svg viewBox="0 0 ${W} ${H}" aria-label="PnL TEST per strategi">`;
+  items.forEach((x, i) => {
+    const ly = 8 + i * rowH, y = ly + barOff, v = x.best.test.pnl, x1 = sx(v), bh = 18, r = 4;
+    const col = v >= 0 ? css('--pos') : css('--neg');
+    const a = Math.min(zero, x1), b = Math.max(zero, x1), w = Math.max(b - a, 1);
+    const rr = Math.min(r, w);
+    const path = v >= 0
+      ? `M${a},${y} H${b-rr} Q${b},${y} ${b},${y+rr} V${y+bh-rr} Q${b},${y+bh} ${b-rr},${y+bh} H${a} Z`
+      : `M${b},${y} H${a+rr} Q${a},${y} ${a},${y+rr} V${y+bh-rr} Q${a},${y+bh} ${a+rr},${y+bh} H${b} Z`;
+    s += `<text x="0" y="${ly+13}" fill="${css('--text-primary')}" font-size="12.5" font-weight="600" font-family="system-ui">${esc(x.name)}</text>`;
+    s += `<text x="0" y="${ly+28}" fill="${css('--text-secondary')}" font-size="11" font-family="system-ui">${esc(x.best.params)}</text>`;
+    s += `<path class="bar" data-i="${i}" d="${path}" fill="${col}"/>`;
+    s += `<rect class="bar" data-i="${i}" x="${labW}" y="${y-6}" width="${W-labW}" height="${bh+12}" fill="transparent"/>`;
+    s += `<text x="${v >= 0 ? b + 6 : a - 6}" y="${y+13}" fill="${css('--text-primary')}" font-size="12.5" font-weight="700" text-anchor="${v >= 0 ? 'start' : 'end'}" font-family="system-ui">${money(v)}${x.best.test.trades === 0 ? ' · 0 trade' : ''}</text>`;
+  });
+  s += `<line x1="${zero}" x2="${zero}" y1="${barOff}" y2="${H-18}" stroke="${css('--axis')}" stroke-width="1"/>`;
+  const anchor = zero > W * 0.7 ? 'end' : zero < W * 0.3 ? 'start' : 'middle';
+  s += `<text x="${zero}" y="${H-4}" fill="${css('--text-secondary')}" font-size="11" text-anchor="${anchor}" font-family="system-ui">$0 · PnL di data TEST</text></svg>`;
+  el.innerHTML = s;
+  el.style.height = H + 'px';
+  el.onpointermove = e => { const b = e.target.closest('.bar'); if (!b) return hideTip(); const x = items[+b.dataset.i], t = x.best.test;
+    showTip(e.clientX, e.clientY, `<div class="t">${esc(x.name)} · TEST</div>` + trow(null, 'PnL', money(t.pnl)) +
+      trow(null, 'Trade', t.trades) + trow(null, 'Menang', pct(t.win_rate)) + trow(null, 'Rugi terbesar', money(t.worst)) +
+      trow(null, 'Drawdown', '$' + t.max_dd.toFixed(2)) + trow(null, 'Satu sisi', t.one_sided)); };
+  el.onpointerleave = hideTip;
+}
+const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+function renderBt(B){
+  const run = $('run'); run.disabled = B.running;
+  run.textContent = B.running ? '⏳ MENGHITUNG…' : '▶ JALANKAN BACKTEST';
+  const R = B.report;
+  let st = B.running ? 'Backtest berjalan…' : B.last_ms ? `Terakhir dihitung ${new Date(B.last_ms).toISOString().slice(11,16)} UTC · otomatis tiap 30 menit` : 'Belum pernah dijalankan';
+  $('bt-status').textContent = st;
+  if (B.error) { $('bt').innerHTML = `<div class="verdict no"><span class="ic">!</span><div><b>Backtest gagal</b><div class="sub">${esc(B.error)}</div></div></div>`; return; }
+  if (!R) { $('bt').innerHTML = `<div class="sub" style="margin-top:12px">${esc(B.note || 'Menunggu data…')}</div>`; return; }
+  const assets = Object.entries(R.per_asset).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(' · ');
+  let h = `<div class="sub" style="margin-top:10px">${num(R.windows)} round (${assets}) · UP menang ${pct(R.up_win_rate)} · ${R.shares} share/trade · jeda order ${R.latency_ms} ms ·
+    pengaturan dipilih di ${num(R.train_windows)} round pertama (TRAIN), dinilai di ${num(R.test_windows)} round terakhir (TEST) · ${R.combos} kombinasi</div>`;
+  if (R.windows < 200) h += `<div class="verdict no" style="border-color:rgba(251,179,21,.6);background:rgba(251,179,21,.07)"><span class="ic" style="background:var(--warning);color:#0b0b0b">!</span><div><b>Data masih sedikit</b><div class="sub">Kurang dari 200 round, hasil belum bisa dipercaya. Biarkan perekam berjalan 2–3 hari.</div></div></div>`;
+  const thin = R.families.filter(f => !f.ok && f.top[0] && f.top[0].test.pnl > 0 && f.top[0].test.trades > 0);
+  h += !R.any_profitable && thin.length
+    ? `<div class="verdict no" style="border-color:rgba(251,179,21,.6);background:rgba(251,179,21,.07)"><span class="ic" style="background:var(--warning);color:#0b0b0b">!</span><div><b>Ada hasil positif, tapi belum cukup trade untuk dipercaya</b><div class="sub">${thin.map(f => esc(SHORT[R.families.indexOf(f)] || f.name) + ': ' + money(f.top[0].test.pnl) + ' dari ' + f.top[0].test.trades + ' trade').join(' · ')}. Butuh ≥ 20 trade di TEST (dan idealnya ≥ 1.000 round). Jangan pakai uang asli dulu.</div></div></div>`
+    : R.any_profitable
+    ? `<div class="verdict ok"><span class="ic">✓</span><div><b>Ada strategi yang untung di data TEST</b><div class="sub">Tetap kumpulkan ≥ 1.000 round dan pastikan hasilnya bertahan sebelum mempertimbangkan uang asli, mulai dari ukuran minimum.</div></div></div>`
+    : `<div class="verdict no"><span class="ic">✕</span><div><b>Belum ada strategi yang untung di data TEST</b><div class="sub">Jangan pakai uang asli. Pengaturan terbaik di TRAIN tidak bertahan di data yang belum pernah dilihat.</div></div></div>`;
+  h += `<div class="bars" id="bars"></div><div class="legend" style="margin-top:4px"><span><span class="sw" style="background:var(--pos)"></span>untung</span><span><span class="sw" style="background:var(--neg)"></span>rugi</span><span class="sub">pengaturan terbaik di TRAIN per strategi, dinilai di TEST</span></div>`;
+  R.families.forEach((f, i) => {
+    const b = f.top[0] && f.top[0].test, none = !b || b.trades === 0;
+    const chip = f.ok ? '<span class="chip good">✓ untung di TEST</span>'
+      : none ? '<span class="chip" style="color:var(--text-secondary)">– belum ada trade di TEST</span>'
+      : b.pnl > 0 ? `<span class="chip warn">! positif, tapi baru ${b.trades} trade (butuh ≥ 20)</span>`
+      : '<span class="chip crit">✕ rugi di TEST</span>';
+    h += `<div class="fam"><h3>${esc(SHORT[i] || f.name)} ${chip}</h3><div class="tblwrap"><table>
+      <tr><th>Pengaturan (5 terbaik di TRAIN)</th><th>Train trade</th><th>Train PnL</th><th>Test trade</th><th>Test menang</th><th>Test PnL</th><th>Rugi terbesar</th><th>Drawdown</th></tr>` +
+      f.top.map(t => `<tr><td>${esc(t.params)}</td><td>${t.train.trades}</td><td class="${cls(t.train.pnl)}">${money(t.train.pnl)}</td>
+        <td>${t.test.trades}</td><td>${pct(t.test.win_rate)}</td><td class="${cls(t.test.pnl)}">${money(t.test.pnl)}</td>
+        <td>${money(t.test.worst)}</td><td>$${t.test.max_dd.toFixed(2)}</td></tr>`).join('') + '</table></div></div>';
+  });
+  $('bt').innerHTML = h;
+  bars($('bars'), R.families);
+}
+
+/* ---------- polling ---------- */
+async function get(u){ const r = await fetch(u, {cache: 'no-store'}); if (!r.ok) throw new Error(r.status); return r.json(); }
+let BT_BUSY = false;
+async function tickLab(){ try { const L = await get('api/lab');
+    const last = L.markets.flatMap(m => m.history.slice(-1)).map(p => p[0]);
+    if (last.length) skew = Math.max(...last) - Date.now()/1000;
+    renderLab(L); } catch (e) { $('feed').className = 'pill bad'; $('feedtxt').textContent = 'OFFLINE'; } }
+async function tickBt(){ try { const B = await get('api/backtest'); BT_BUSY = B.running; renderBt(B); } catch (e) {} }
+$('run').onclick = async () => { $('run').disabled = true;
+  try { await fetch('api/backtest/run', {method: 'POST'}); } catch (e) {}
+  BT_BUSY = true; tickBt(); };
+setInterval(tickLab, 1000); tickLab();
+setInterval(() => { if (BT_BUSY || !document.hidden) tickBt(); }, 4000); tickBt();
+setInterval(() => { $('clock').textContent = new Date().toISOString().slice(11,19) + ' UTC'; }, 1000);
+window.addEventListener('resize', () => { if (LAB) renderLab(LAB); tickBt(); });
+</script>
+</body>
+</html>

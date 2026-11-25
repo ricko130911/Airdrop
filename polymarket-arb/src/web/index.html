@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>polymarket-arb</title>
+<style>
+  :root{--bg:#0d1117;--panel:#0d1117;--line:#3fc1c9;--txt:#d0d0d0;--dim:#6e7681;
+        --g:#57d364;--r:#e5534b;--y:#e3c84a;--b:#539bf5;--c:#3fc1c9;--m:#c678dd;--w:#e6e6e6}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+        font:13px/1.45 ui-monospace,"JetBrains Mono","DejaVu Sans Mono",Menlo,Consolas,monospace}
+  .app{display:grid;grid-template-columns:330px 1fr;grid-template-rows:auto 1fr auto;
+        gap:16px 8px;padding:14px 8px 8px;height:100vh}
+  .panel{border:1px solid var(--line);position:relative;padding:14px 10px 8px;min-height:0;overflow:visible}
+  .panel>h2{position:absolute;top:-9px;left:10px;margin:0;padding:0 6px;background:var(--bg);
+        font-size:13px;color:#fff;font-weight:700}
+  #markets{grid-column:1;grid-row:1}
+  #metrics{grid-column:1;grid-row:2 / span 2}
+  #kv{overflow:auto;max-height:100%}
+  #logs{grid-column:2;grid-row:1 / span 2;display:flex;flex-direction:column}
+  #meta{grid-column:2;grid-row:3}
+  .mk{display:flex;gap:10px;padding:2px 4px;cursor:pointer;white-space:nowrap}
+  .mk.sel{background:#1e3c46;color:#fff}
+  .mk .n{color:var(--dim)} .mk .l{color:var(--c);min-width:110px}
+  .dot{margin-left:auto}
+  .kv{display:flex;justify-content:space-between;gap:8px;white-space:nowrap}
+  #logbox{overflow:auto;flex:1;white-space:pre;min-height:0}
+  #logbox div{min-height:1.45em}
+  .meta{display:grid;grid-template-columns:110px 1fr 110px 1fr;gap:2px 10px}
+  .meta .k{color:#9aa4ad}
+  .g{color:var(--g)}.r{color:var(--r)}.y{color:var(--y)}.b{color:var(--b)}
+  .c{color:var(--c)}.m{color:var(--m)}.d{color:var(--dim)}.w{color:var(--w)}
+  .bar{display:flex;gap:12px;align-items:center;margin-bottom:6px;color:#9aa4ad;flex-wrap:wrap}
+  .bar label{cursor:pointer}
+  .live{color:var(--g);font-weight:700}
+  footer{grid-column:1 / span 2;color:#9aa4ad;display:flex;justify-content:space-between;font-size:12px}
+  #stale{display:none;color:var(--r);font-weight:700}
+  @media (max-width: 860px){
+    .app{display:flex;flex-direction:column;height:auto}
+    #logs{height:60vh}
+    #logbox{white-space:pre-wrap;word-break:break-word}
+    #metrics{overflow:visible}
+    .meta{grid-template-columns:100px 1fr}
+    footer{flex-direction:column;gap:4px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="panel" id="markets"><h2>Markets</h2><div id="mklist" class="d">waiting for markets...</div></section>
+  <section class="panel" id="metrics"><h2>Custom Metrics</h2><div id="kv"></div></section>
+  <section class="panel" id="logs"><h2 id="logtitle">arb Logs</h2>
+    <div class="bar">
+      <label><input type="checkbox" id="all"> all markets</label>
+      <label><input type="checkbox" id="follow" checked> auto-scroll</label>
+      <span id="stale">● connection to bot lost</span>
+    </div>
+    <div id="logbox"></div>
+  </section>
+  <section class="panel" id="meta"><h2>Metadata</h2><div class="meta" id="metagrid"></div></section>
+  <footer><span>klik market untuk pindah · halaman ini hanya untuk melihat (read-only)</span><span id="clock"></span></footer>
+</div>
+<script>
+let sel = 0, lastOk = Date.now();
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const f = (x, d) => x == null ? '-' : x.toFixed(d);
+const ms = us => us == null || us === 0 ? '-' : (us / 1000).toFixed(2) + ' ms';
+const dur = s => { s = Math.max(0, s|0); const h = s/3600|0, m = (s/60|0)%60; return h ? `${h}h ${m}m` : `${m}m ${s%60}s`; };
+
+function kv(k, v, cls='w'){ return `<div class="kv"><span>${k}</span><span class="${cls}">${esc(String(v))}</span></div>`; }
+
+function render(st){
+  const ms_ = st.markets;
+  if (sel >= ms_.length) sel = 0;
+  $('mklist').innerHTML = ms_.length ? ms_.map((m, i) => {
+    const sum = m.up != null && m.down != null ? m.up + m.down : null;
+    const dot = sum == null ? 'd' : sum < 1 ? 'y' : 'g';
+    return `<div class="mk ${i===sel?'sel':''}" data-i="${i}"><span class="n">[${String(i).padStart(2)}]</span>`+
+      `<span class="l">${esc(m.label)}</span><span>T-${Math.max(0,m.left)}s</span>`+
+      `<span>Σ ${f(sum,3)}</span><span class="dot ${dot}">●</span></div>`;
+  }).join('') : '<span class="d">waiting for markets...</span>';
+  document.querySelectorAll('.mk').forEach(el => el.onclick = () => { sel = +el.dataset.i; render(st); });
+
+  const m = ms_[sel] || {};
+  const sum = m.up != null && m.down != null ? m.up + m.down : null;
+  const edge = sum == null ? null : 1 - sum;
+  const fired = st.locks + st.misses + st.legRisk;
+  $('kv').innerHTML =
+    kv('Σ best asks', f(sum,3), sum != null && sum <= st.maxPairCost ? 'y' : 'w') +
+    kv('UP best ask', f(m.up,3), 'g') +
+    kv('DOWN best ask', f(m.down,3), 'r') +
+    kv('Edge', edge == null ? '-' : (edge>=0?'+':'') + edge.toFixed(3), edge > 0 ? 'g' : 'y') +
+    kv('Fire threshold Σ ≤', st.maxPairCost.toFixed(3)) +
+    kv('Time left', m.left == null ? '-' : dur(m.left)) +
+    kv('Taker fee rate', m.fee == null ? '-' : `${m.fee} (exp ${m.feeExp})`) +
+    kv('Position UP/DOWN', m.shUp == null ? '-' : `${m.shUp.toFixed(0)} / ${m.shDown.toFixed(0)}`) +
+    kv('Market cost', m.spent == null ? '-' : '$' + m.spent.toFixed(2)) +
+    kv('Locked PnL', (st.pnl>=0?'+':'') + st.pnl.toFixed(2), st.pnl >= 0 ? 'g' : 'r') +
+    kv('Locks / Miss', `${st.locks} / ${st.misses}`) +
+    kv('Leg-risk events', st.legRisk, st.legRisk ? 'm' : 'w') +
+    kv('Hit rate', fired ? Math.floor(st.locks*100/fired) + ' %' : '-') +
+    kv('Tick→fill p50', ms(st.fireP50)) +
+    kv('Tick→fill p95', ms(st.fireP95)) +
+    kv('Sign latency p50', ms(st.signP50)) +
+    kv('CLOB RTT', ms(st.rtt)) +
+    kv('Book process p50/p99', st.procP50 == null ? '-' : `${(st.procP50/1000).toFixed(1)}/${(st.procP99/1000).toFixed(1)} µs`) +
+    kv('Book msgs/s', st.msgs) +
+    kv('Polymarket balance', st.balance == null ? '-' : '$' + st.balance.toFixed(2), 'g') +
+    kv('Capital in use', '$' + st.capital.toFixed(2)) +
+    kv('Trading', st.halted ? 'HALTED' : 'active', st.halted ? 'r' : 'g') +
+    kv('WS feed', st.ws, st.ws.startsWith('ok') ? 'g' : 'r');
+
+  const all = $('all').checked;
+  $('logtitle').textContent = !all && m.label ? `arb-${m.label} Logs` : 'arb Logs (all markets)';
+  const box = $('logbox');
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.innerHTML = st.logs
+    .filter(l => all || !m.label || l.m === m.label || l.m === 'net' || l.m === 'ws')
+    .map(l => `<div><span class="c">arb-${esc(l.m)} &gt; </span>` +
+      l.s.map(([t, c]) => `<span class="${c}">${esc(t)}</span>`).join('') + '</div>').join('');
+  if ($('follow').checked && atBottom) box.scrollTop = box.scrollHeight;
+
+  const mode = st.dryRun ? '<span class="y">DRY RUN (no orders)</span>' : '<span class="live">LIVE</span>';
+  $('metagrid').innerHTML = [
+    ['App name','polymarket-arb'],['Market', esc(m.slug || '-')],
+    ['Strategy','UP+DOWN complete set'],['Watching', esc(st.watching)],
+    ['Version', st.version],['Order type','FOK batch (2 legs / 1 request)'],
+    ['Mode', mode],['Threshold', `Σ ask + fees ≤ ${st.maxPairCost.toFixed(3)}`],
+    ['Uptime', `<span class="g">${dur(st.uptime)}</span>`],['Language','Rust (tokio, LTO, native CPU)'],
+  ].map(([k,v]) => `<span class="k">${k}</span><span>${v}</span>`).join('');
+}
+
+let first = true;
+async function tick(){
+  try {
+    const r = await fetch('api/state', {cache: 'no-store'});
+    if (r.ok) {
+      const st = await r.json();
+      render(st);
+      if (first) { $('logbox').scrollTop = 1e9; first = false; }
+      lastOk = Date.now();
+    }
+  } catch (e) {}
+  $('stale').style.display = Date.now() - lastOk > 3000 ? 'inline' : 'none';
+  $('clock').textContent = 'polymarket-arb · ' + new Date().toISOString().replace('T',' ').slice(0,19) + ' UTC';
+}
+setInterval(tick, 700); tick();
+</script>
+</body>
+</html>
