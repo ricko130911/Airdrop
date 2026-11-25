@@ -406,6 +406,9 @@ pub fn load(dir: &Path) -> Result<Vec<Window>> {
         .filter(|n| n.starts_with("quotes-") && n.ends_with(".csv"))
         .collect();
     names.sort();
+    // Bound memory on small VPSes: only the most recent BACKTEST_DAYS days (default 4).
+    let days: usize = std::env::var("BACKTEST_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(4).max(1);
+    let names = names.split_off(names.len().saturating_sub(days));
     for name in names {
         each_line(&dir.join(&name), |l| {
             let f: Vec<&str> = l.split(',').collect();

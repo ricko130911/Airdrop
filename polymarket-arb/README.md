@@ -99,6 +99,9 @@ pm2 save && pm2 startup                         # nyala lagi otomatis setelah re
 Buka `http://IP-VPS:8080` (login `admin` + password di `.env`). Perintah lain:
 `pm2 logs poly-lab`, `pm2 monit`, `pm2 restart poly-lab` (setelah `git pull && cargo build --release`).
 Pratinjau tanpa koneksi: `RECORD_DIR=data ./target/release/polymarket-arb --lab-demo`.
+Tampilan dashboard dibaca dari `src/web/lab.html` setiap kali halaman dibuka, jadi perubahan
+tampilan cukup `git pull` (tanpa build ulang). Backtest memakai `BACKTEST_DAYS` hari data
+terakhir (default 4) supaya RAM VPS kecil tidak habis.
 
 ## Dashboard web
 Bot juga menyajikan dashboard yang sama di browser (desktop & HP), hanya untuk melihat:

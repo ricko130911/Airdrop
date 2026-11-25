@@ -64,6 +64,7 @@
   .markets{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
   .mkt{cursor:pointer;transition:transform .15s, box-shadow .15s}
   .mkt:hover{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(62,232,255,.25) inset,0 12px 34px rgba(0,0,0,.45),0 0 24px rgba(62,232,255,.08)}
+  .mkt.ended{opacity:.5}
   .mkt.sel{box-shadow:0 0 0 1px rgba(62,232,255,.55) inset,0 0 30px rgba(62,232,255,.14)}
   .mhead{display:flex;align-items:center;gap:8px}
   .asset{font:800 13px var(--mono);letter-spacing:.1em}
@@ -196,13 +197,13 @@ const num = n => n == null ? '–' : n.toLocaleString('id-ID');
 const money = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toFixed(2);
 const pct = v => Math.round(v*100) + '%';
 const dur = s => { s = Math.max(0, s|0); const d = s/86400|0, h = (s/3600|0)%24, m = (s/60|0)%60;
-  return d ? `${d}h ${h}j` : h ? `${h}j ${m}m` : `${m}m ${s%60}d`; };
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s%60}s`; };
 const bytes = b => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : (b/1e3|0)+' KB';
 const hhmmss = t => new Date(t*1000).toISOString().slice(11,19);
 const sigma = (u, d) => (u == null || d == null) ? null : u + d;
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-let LAB = null, SEL = null, skew = 0;
+let LAB = null, SEL = null, PICKED = false, skew = 0;
 const tip = $('tip');
 function showTip(x, y, html){ tip.innerHTML = html; tip.style.display = 'block';
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -289,8 +290,10 @@ function renderLab(L){
   $('t-up').textContent = dur(Date.now()/1000 - L.started_ms/1000);
   $('t-data').textContent = bytes(L.data_bytes || 0);
 
-  const mk = [...L.markets].sort((a, b) => a.end_ts - b.end_ts || a.asset.localeCompare(b.asset));
-  if (!SEL || !mk.find(m => m.slug === SEL)) SEL = mk[0] && mk[0].slug;
+  const ended = m => m.end_ts <= now;
+  const mk = [...L.markets].sort((a, b) => ended(a) - ended(b) || a.end_ts - b.end_ts || a.asset.localeCompare(b.asset));
+  if (!SEL || !mk.find(m => m.slug === SEL) || (!PICKED && ended(mk.find(m => m.slug === SEL)))) {
+    SEL = (mk.find(m => !ended(m)) || mk[0] || {}).slug; PICKED = false; }
   const box = $('markets');
   // keep card DOM stable (hover state survives refresh)
   const keep = new Set(mk.map(m => m.slug));
@@ -301,14 +304,15 @@ function renderLab(L){
       c.innerHTML = `<div class="mhead"><span class="asset"></span><span class="win"></span><span class="cd"></span></div>
         <div class="sigma"><span class="v"></span><span class="l">Σ ASK</span><span class="flag"></span></div>
         <div class="legs"></div><div class="spark"></div>`;
-      c.onclick = () => { SEL = m.slug; renderLab(LAB); };
+      c.onclick = () => { SEL = m.slug; PICKED = true; renderLab(LAB); };
     }
     if (box.children[i] !== c) box.insertBefore(c, box.children[i] || null);
     c.classList.toggle('sel', m.slug === SEL);
+    c.classList.toggle('ended', ended(m));
     const left = m.end_ts - now, sg = sigma(m.up_ask, m.down_ask);
     c.querySelector('.asset').textContent = m.asset.toUpperCase();
     c.querySelector('.win').textContent = m.label.split(' ').slice(-1)[0] + (left > 300 ? ' · berikutnya' : '');
-    c.querySelector('.cd').textContent = left > 300 ? `mulai ${dur(left-300)}` : `T-${Math.max(0, left|0)}s`;
+    c.querySelector('.cd').textContent = left <= 0 ? 'SELESAI' : left > 300 ? `mulai ${dur(left-300)}` : `T-${left|0}s`;
     c.querySelector('.sigma .v').textContent = sg == null ? '–' : sg.toFixed(3);
     c.querySelector('.flag').innerHTML = sg != null && sg <= 0.98 ? '<span class="chip warn">⚡ Σ ≤ 0,98</span>' : '';
     c.querySelector('.legs').innerHTML =
@@ -397,7 +401,7 @@ function bars(el, fams){
     s += `<text x="0" y="${ly+28}" fill="${css('--text-secondary')}" font-size="11" font-family="system-ui">${esc(x.best.params)}</text>`;
     s += `<path class="bar" data-i="${i}" d="${path}" fill="${col}"/>`;
     s += `<rect class="bar" data-i="${i}" x="${labW}" y="${y-6}" width="${W-labW}" height="${bh+12}" fill="transparent"/>`;
-    s += `<text x="${v >= 0 ? b + 6 : a - 6}" y="${y+13}" fill="${css('--text-primary')}" font-size="12.5" font-weight="700" text-anchor="${v >= 0 ? 'start' : 'end'}" font-family="system-ui">${money(v)}</text>`;
+    s += `<text x="${v >= 0 ? b + 6 : a - 6}" y="${y+13}" fill="${css('--text-primary')}" font-size="12.5" font-weight="700" text-anchor="${v >= 0 ? 'start' : 'end'}" font-family="system-ui">${money(v)}${x.best.test.trades === 0 ? ' · 0 trade' : ''}</text>`;
   });
   s += `<line x1="${zero}" x2="${zero}" y1="${barOff}" y2="${H-18}" stroke="${css('--axis')}" stroke-width="1"/>`;
   const anchor = zero > W * 0.7 ? 'end' : zero < W * 0.3 ? 'start' : 'middle';
@@ -428,7 +432,11 @@ function renderBt(B){
     : `<div class="verdict no"><span class="ic">✕</span><div><b>Belum ada strategi yang untung di data TEST</b><div class="sub">Jangan pakai uang asli. Pengaturan terbaik di TRAIN tidak bertahan di data yang belum pernah dilihat.</div></div></div>`;
   h += `<div class="bars" id="bars"></div><div class="legend" style="margin-top:4px"><span><span class="sw" style="background:var(--pos)"></span>untung</span><span><span class="sw" style="background:var(--neg)"></span>rugi</span><span class="sub">pengaturan terbaik di TRAIN per strategi, dinilai di TEST</span></div>`;
   R.families.forEach((f, i) => {
-    h += `<div class="fam"><h3>${esc(SHORT[i] || f.name)} ${f.ok ? '<span class="chip good">✓ untung di TEST</span>' : '<span class="chip crit">✕ tidak untung</span>'}</h3><div class="tblwrap"><table>
+    const none = !f.top[0] || f.top[0].test.trades === 0;
+    const chip = f.ok ? '<span class="chip good">✓ untung di TEST</span>'
+      : none ? '<span class="chip" style="color:var(--text-secondary)">– belum ada trade di TEST</span>'
+      : '<span class="chip crit">✕ tidak untung</span>';
+    h += `<div class="fam"><h3>${esc(SHORT[i] || f.name)} ${chip}</h3><div class="tblwrap"><table>
       <tr><th>Pengaturan (5 terbaik di TRAIN)</th><th>Train trade</th><th>Train PnL</th><th>Test trade</th><th>Test menang</th><th>Test PnL</th><th>Rugi terbesar</th><th>Drawdown</th></tr>` +
       f.top.map(t => `<tr><td>${esc(t.params)}</td><td>${t.train.trades}</td><td class="${cls(t.train.pnl)}">${money(t.train.pnl)}</td>
         <td>${t.test.trades}</td><td>${pct(t.test.win_rate)}</td><td class="${cls(t.test.pnl)}">${money(t.test.pnl)}</td>

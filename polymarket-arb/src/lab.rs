@@ -133,7 +133,10 @@ async fn index(AxState(app): AxState<App>, headers: HeaderMap) -> Response {
     if !check_auth(app.auth.as_deref(), &headers) {
         return unauthorized();
     }
-    let mut r = Html(PAGE).into_response();
+    // Prefer the file on disk (cwd = polymarket-arb under pm2), so UI updates only need
+    // `git pull`; fall back to the copy compiled into the binary.
+    let page = std::fs::read_to_string("src/web/lab.html").unwrap_or_else(|_| PAGE.to_owned());
+    let mut r = Html(page).into_response();
     r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     r
 }
