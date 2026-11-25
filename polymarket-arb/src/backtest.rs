@@ -15,6 +15,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 
 use crate::arb::FeeModel;
 
@@ -369,32 +370,36 @@ fn lvl(px: &str, sz: &str) -> Option<Lvl> {
     Some(Lvl { px, sz })
 }
 
+/// Streams a CSV (skipping its header) line by line, so big recordings don't sit in RAM twice.
+fn each_line(path: &Path, mut f: impl FnMut(&str)) -> Result<()> {
+    let file = fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    for line in BufReader::new(file).lines().skip(1).map_while(Result::ok) {
+        f(&line);
+    }
+    Ok(())
+}
+
 pub fn load(dir: &Path) -> Result<Vec<Window>> {
-    let read = |name: &str| -> Result<Vec<String>> {
-        let p = dir.join(name);
-        let f = fs::File::open(&p).with_context(|| format!("cannot open {}", p.display()))?;
-        Ok(BufReader::new(f).lines().skip(1).map_while(Result::ok).collect())
-    };
     let mut meta: HashMap<String, FeeModel> = HashMap::new();
-    for l in read("markets.csv")? {
+    each_line(&dir.join("markets.csv"), |l| {
         let f: Vec<&str> = l.split(',').collect();
         if f.len() >= 4 {
             let fee = FeeModel { rate: f[2].parse().unwrap_or(0.0), exponent: f[3].parse().unwrap_or(1) };
             meta.insert(f[0].to_owned(), fee);
         }
-    }
+    })?;
     let mut outcome: HashMap<String, (i64, bool)> = HashMap::new();
-    for l in read("outcomes.csv")? {
+    each_line(&dir.join("outcomes.csv"), |l| {
         let f: Vec<&str> = l.split(',').collect();
         if f.len() >= 3 {
             let up = match f[2].trim() {
                 "UP" | "YES" => true,
                 "DOWN" | "NO" => false,
-                _ => continue,
+                _ => return,
             };
             outcome.insert(f[0].to_owned(), (f[1].parse().unwrap_or(0), up));
         }
-    }
+    })?;
     let mut quotes: HashMap<String, Vec<Quote>> = HashMap::new();
     let mut names: Vec<_> = fs::read_dir(dir)?
         .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
@@ -402,20 +407,26 @@ pub fn load(dir: &Path) -> Result<Vec<Window>> {
         .collect();
     names.sort();
     for name in names {
-        for l in read(&name)? {
+        each_line(&dir.join(&name), |l| {
             let f: Vec<&str> = l.split(',').collect();
             if f.len() < 11 || !outcome.contains_key(f[1]) {
-                continue;
+                return;
             }
-            let Ok(t) = f[0].parse() else { continue };
-            quotes.entry(f[1].to_owned()).or_default().push(Quote {
+            let Ok(t) = f[0].parse() else { return };
+            let q = Quote {
                 t,
                 up_bid: lvl(f[3], f[4]),
                 up_ask: lvl(f[5], f[6]),
                 dn_bid: lvl(f[7], f[8]),
                 dn_ask: lvl(f[9], f[10]),
-            });
-        }
+            };
+            match quotes.get_mut(f[1]) {
+                Some(v) => v.push(q),
+                None => {
+                    quotes.insert(f[1].to_owned(), vec![q]);
+                }
+            }
+        })?;
     }
     let mut ws: Vec<Window> = quotes
         .into_iter()
@@ -435,11 +446,145 @@ pub fn load(dir: &Path) -> Result<Vec<Window>> {
             })
         })
         .collect();
-    ws.sort_by_key(|w| w.end_ms);
+    // deterministic order: windows of different assets share end times
+    ws.sort_by(|a, b| a.end_ms.cmp(&b.end_ms).then_with(|| a.asset.cmp(&b.asset)));
     Ok(ws)
 }
 
 // ---------- report ----------
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct StatsOut {
+    pub trades: usize,
+    pub win_rate: f64,
+    pub pnl: f64,
+    pub worst: f64,
+    pub max_dd: f64,
+    pub locked: usize,
+    pub one_sided: usize,
+}
+
+impl From<&Stats> for StatsOut {
+    fn from(s: &Stats) -> Self {
+        Self {
+            trades: s.trades,
+            win_rate: if s.trades > 0 { s.wins as f64 / s.trades as f64 } else { 0.0 },
+            pnl: s.pnl,
+            worst: s.worst,
+            max_dd: s.max_dd,
+            locked: s.locked,
+            one_sided: s.one_sided,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RowOut {
+    pub params: String,
+    pub train: StatsOut,
+    pub test: StatsOut,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FamilyOut {
+    pub name: String,
+    /// best 5 by TRAIN pnl (the selection never looks at TEST)
+    pub top: Vec<RowOut>,
+    /// the TRAIN-best setting made money on TEST with >= 20 trades
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Report {
+    pub generated_ms: i64,
+    pub windows: usize,
+    pub per_asset: std::collections::BTreeMap<String, usize>,
+    pub up_win_rate: f64,
+    pub train_windows: usize,
+    pub test_windows: usize,
+    pub shares: f64,
+    pub latency_ms: i64,
+    pub combos: usize,
+    pub families: Vec<FamilyOut>,
+    pub any_profitable: bool,
+}
+
+pub const FAMILIES: [&str; 3] = [
+    "A. Beli UP+DOWN bersamaan (bot lama)",
+    "B. Dua arah bertahap (leg-in)",
+    "C. Last cent (sisi hampir pasti)",
+];
+
+pub fn default_cfg() -> SimCfg {
+    SimCfg { latency_ms: 500, shares: 5.0, unwind_delay_ms: 2000, unwind_max_loss: 0.10 }
+}
+
+/// Loads `dir`, runs the whole grid (all cores), writes `backtest-results.csv`.
+/// `Ok(None)` = not enough complete windows yet.
+pub fn compute(dir: &Path, c: SimCfg) -> Result<Option<Report>> {
+    let ws = load(dir)?;
+    if ws.len() < 2 {
+        return Ok(None);
+    }
+    let mut per_asset = std::collections::BTreeMap::new();
+    for w in &ws {
+        *per_asset.entry(w.asset.clone()).or_insert(0usize) += 1;
+    }
+    let up_wins = ws.iter().filter(|w| w.up_won).count();
+    let (train, test) = ws.split_at((ws.len() * 6 / 10).clamp(1, ws.len() - 1));
+
+    let grid = grid();
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let chunk = grid.len().div_ceil(threads);
+    let mut results: Vec<(Strategy, Stats, Stats)> = std::thread::scope(|sc| {
+        let hs: Vec<_> = grid
+            .chunks(chunk)
+            .map(|part| {
+                sc.spawn(move || {
+                    part.iter().map(|s| (*s, evaluate(train, s, &c), evaluate(test, s, &c))).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
+
+    let mut f = fs::File::create(dir.join("backtest-results.csv"))?;
+    writeln!(f, "family,params,train_trades,train_wins,train_pnl,train_worst,test_trades,test_wins,test_pnl,test_worst,test_max_dd")?;
+    for (s, a, b) in &results {
+        writeln!(f, "{},{},{},{},{:.4},{:.4},{},{},{:.4},{:.4},{:.4}", s.family(), s.describe(), a.trades, a.wins, a.pnl, a.worst, b.trades, b.wins, b.pnl, b.worst, b.max_dd)?;
+    }
+
+    results.sort_by(|x, y| y.1.pnl.total_cmp(&x.1.pnl));
+    let families: Vec<FamilyOut> = FAMILIES
+        .iter()
+        .map(|fam| {
+            let top: Vec<RowOut> = results
+                .iter()
+                .filter(|r| r.0.family() == *fam)
+                .take(5)
+                .map(|(s, a, b)| RowOut { params: s.describe(), train: a.into(), test: b.into() })
+                .collect();
+            let ok = top.first().is_some_and(|r| r.test.pnl > 0.0 && r.test.trades >= 20);
+            FamilyOut { name: (*fam).to_owned(), top, ok }
+        })
+        .collect();
+    Ok(Some(Report {
+        generated_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
+        windows: ws.len(),
+        per_asset,
+        up_win_rate: up_wins as f64 / ws.len() as f64,
+        train_windows: train.len(),
+        test_windows: test.len(),
+        shares: c.shares,
+        latency_ms: c.latency_ms,
+        combos: results.len(),
+        any_profitable: families.iter().any(|f| f.ok),
+        families,
+    }))
+}
 
 fn flag<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
     args.iter()
@@ -449,11 +594,10 @@ fn flag<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
-fn row(s: &Stats) -> String {
-    let win = if s.trades > 0 { s.wins as f64 * 100.0 / s.trades as f64 } else { 0.0 };
+fn row(s: &StatsOut) -> String {
     format!(
         "{:>5} {:>4.0}% {:>+8.2} {:>+7.2} {:>6.2}",
-        s.trades, win, s.pnl, s.worst, s.max_dd
+        s.trades, s.win_rate * 100.0, s.pnl, s.worst, s.max_dd
     )
 }
 
@@ -465,91 +609,56 @@ pub fn run(args: &[String]) -> Result<()> {
         .filter(|a| !a.starts_with("--"))
         .cloned()
         .unwrap_or_else(|| "data".into());
+    let d = default_cfg();
     let c = SimCfg {
-        latency_ms: flag(args, "--latency-ms", 500),
-        shares: flag(args, "--shares", 5.0),
-        unwind_delay_ms: flag(args, "--unwind-delay-ms", 2000),
-        unwind_max_loss: flag(args, "--unwind-max-loss", 0.10),
+        latency_ms: flag(args, "--latency-ms", d.latency_ms),
+        shares: flag(args, "--shares", d.shares),
+        unwind_delay_ms: flag(args, "--unwind-delay-ms", d.unwind_delay_ms),
+        unwind_max_loss: flag(args, "--unwind-max-loss", d.unwind_max_loss),
     };
-    let ws = load(Path::new(&dir))?;
-    if ws.is_empty() {
-        println!("Tidak ada window lengkap (orderbook + hasil) di {dir}. Jalankan --record lebih lama.");
+    let Some(r) = compute(Path::new(&dir), c)? else {
+        println!("Belum ada cukup window lengkap (orderbook + hasil) di {dir}. Jalankan --record lebih lama.");
         return Ok(());
-    }
-    let mut per_asset: HashMap<&str, usize> = HashMap::new();
-    for w in &ws {
-        *per_asset.entry(w.asset.as_str()).or_default() += 1;
-    }
-    let up_wins = ws.iter().filter(|w| w.up_won).count();
-    if ws.len() < 2 {
-        println!("Baru {} window lengkap. Jalankan --record lebih lama.", ws.len());
-        return Ok(());
-    }
-    let (train, test) = ws.split_at((ws.len() * 6 / 10).clamp(1, ws.len() - 1));
-    println!("== Data: {} window ({:?}), UP menang {:.0}% ==", ws.len(), per_asset, up_wins as f64 * 100.0 / ws.len() as f64);
+    };
+    println!("== Data: {} window ({:?}), UP menang {:.0}% ==", r.windows, r.per_asset, r.up_win_rate * 100.0);
     println!(
         "   simulasi: {} share/trade, jeda order {} ms, jual-balik setelah {} ms, fee taker asli per market",
         c.shares, c.latency_ms, c.unwind_delay_ms
     );
-    println!("   TRAIN = {} window pertama (untuk memilih pengaturan), TEST = {} window terakhir (penilaian jujur)\n", train.len(), test.len());
-    if ws.len() < 200 {
+    println!(
+        "   TRAIN = {} window pertama (untuk memilih pengaturan), TEST = {} window terakhir (penilaian jujur)\n",
+        r.train_windows, r.test_windows
+    );
+    if r.windows < 200 {
         println!("!! Data masih sedikit (<200 window). Hasil di bawah belum bisa dipercaya.\n");
     }
-
-    // evaluate the whole grid on all cores
-    let grid = grid();
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
-    let chunk = grid.len().div_ceil(threads);
-    let mut results: Vec<(Strategy, Stats, Stats)> = std::thread::scope(|sc| {
-        let hs: Vec<_> = grid
-            .chunks(chunk)
-            .map(|part| sc.spawn(move || part.iter().map(|s| (*s, evaluate(train, s, &c), evaluate(test, s, &c))).collect::<Vec<_>>()))
-            .collect();
-        hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
-    });
-
-    let out = Path::new(&dir).join("backtest-results.csv");
-    let mut f = fs::File::create(&out)?;
-    writeln!(f, "family,params,train_trades,train_wins,train_pnl,train_worst,test_trades,test_wins,test_pnl,test_worst,test_max_dd")?;
-    for (s, a, b) in &results {
-        writeln!(f, "{},{},{},{},{:.4},{:.4},{},{},{:.4},{:.4},{:.4}", s.family(), s.describe(), a.trades, a.wins, a.pnl, a.worst, b.trades, b.wins, b.pnl, b.worst, b.max_dd)?;
-    }
-
-    results.sort_by(|x, y| y.1.pnl.total_cmp(&x.1.pnl));
-    let mut verdict: Vec<(String, Stats)> = Vec::new();
-    for fam in ["A. Beli UP+DOWN bersamaan (bot lama)", "B. Dua arah bertahap (leg-in)", "C. Last cent (sisi hampir pasti)"] {
-        println!("== {fam} ==");
+    for fam in &r.families {
+        println!("== {} ==", fam.name);
         println!("{:<44} | {:^35} | {:^35}", "pengaturan (5 terbaik di TRAIN)", "TRAIN", "TEST (data belum pernah dilihat)");
         println!("{:<44} | trade   win      PnL   worst  maxDD | trade   win      PnL   worst  maxDD", "");
-        let top: Vec<_> = results.iter().filter(|r| r.0.family() == fam).take(5).collect();
-        for (s, a, b) in &top {
-            println!("{:<44} | {} | {}", s.describe(), row(a), row(b));
-        }
-        if let Some((s, _, b)) = top.first() {
-            verdict.push((format!("{fam}: {}", s.describe()), b.clone()));
+        for t in &fam.top {
+            println!("{:<44} | {} | {}", t.params, row(&t.train), row(&t.test));
         }
         println!();
     }
-
     println!("== Kesimpulan (pengaturan terbaik TRAIN, dinilai di TEST) ==");
-    let mut any = false;
-    for (name, b) in &verdict {
-        let ok = b.pnl > 0.0 && b.trades >= 20;
-        any |= ok;
-        println!(
-            "{} {name}\n     TEST: {} trade, PnL {:+.2} $, rugi terbesar/trade {:+.2} $, drawdown {:.2} $",
-            if ok { "[+]" } else { "[-]" },
-            b.trades, b.pnl, b.worst, b.max_dd
-        );
+    for fam in &r.families {
+        if let Some(b) = fam.top.first() {
+            println!(
+                "{} {}: {}\n     TEST: {} trade, PnL {:+.2} $, rugi terbesar/trade {:+.2} $, drawdown {:.2} $",
+                if fam.ok { "[+]" } else { "[-]" },
+                fam.name, b.params, b.test.trades, b.test.pnl, b.test.worst, b.test.max_dd
+            );
+        }
     }
     println!();
-    if any {
+    if r.any_profitable {
         println!("Ada strategi yang untung di data TEST. Kumpulkan data lebih lama (>= 1000 window) dan pastikan");
         println!("hasilnya tetap positif sebelum mempertimbangkan uang asli, mulai dengan ukuran minimum.");
     } else {
         println!("TIDAK ada strategi yang untung (dengan >= 20 trade) di data TEST. Jangan trading dengan uang asli.");
     }
-    println!("\nSemua {} kombinasi tersimpan di {}", results.len(), out.display());
+    println!("\nSemua {} kombinasi tersimpan di {}/backtest-results.csv", r.combos, dir);
     Ok(())
 }
 

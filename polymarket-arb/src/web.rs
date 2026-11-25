@@ -44,7 +44,17 @@ fn css(c: Color) -> &'static str {
 }
 
 fn authorized(app: &App, headers: &HeaderMap) -> bool {
-    let Some(expected) = &app.auth else { return true };
+    check_auth(app.auth.as_deref(), headers)
+}
+
+/// `Authorization` header value expected for user/password.
+pub(crate) fn basic_value(user: &str, pw: &str) -> String {
+    format!("Basic {}", STANDARD.encode(format!("{user}:{pw}")))
+}
+
+/// true if no auth is configured (localhost-only) or the header matches.
+pub(crate) fn check_auth(expected: Option<&str>, headers: &HeaderMap) -> bool {
+    let Some(expected) = expected else { return true };
     let got = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -58,7 +68,7 @@ fn authorized(app: &App, headers: &HeaderMap) -> bool {
             == 0
 }
 
-fn unauthorized() -> Response {
+pub(crate) fn unauthorized() -> Response {
     let mut r = (StatusCode::UNAUTHORIZED, "login required").into_response();
     r.headers_mut().insert(
         header::WWW_AUTHENTICATE,
@@ -138,7 +148,7 @@ pub fn spawn(dash: Arc<Dash>, port: u16, user: String, password: Option<String>)
     let (ip, auth) = match &password {
         Some(pw) => (
             [0, 0, 0, 0],
-            Some(format!("Basic {}", STANDARD.encode(format!("{user}:{pw}")))),
+            Some(basic_value(&user, pw)),
         ),
         None => ([127, 0, 0, 1], None),
     };

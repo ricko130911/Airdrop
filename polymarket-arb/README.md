@@ -78,6 +78,28 @@ membayar harga limit + fee taker asli, hanya terisi jika ukuran cukup. Pengatura
 data pertama (TRAIN) dan dinilai di 40% terakhir (TEST). Semua hasil ada di
 `data/backtest-results.csv`.
 
+## POLY//LAB: dashboard riset di VPS (pm2)
+
+![POLY//LAB](docs/lab-dashboard.png)
+
+Perekam (`--record`) sekaligus menyajikan dashboard web: harga live semua market 5m,
+grafik Σ ask dan UP/DOWN, pemenang setiap round, dan hasil backtest (otomatis tiap 30 menit
+plus tombol "Jalankan backtest"). Read-only: tidak ada wallet, tidak ada order.
+
+```bash
+# sekali saja: Node.js + pm2
+apt install -y nodejs npm && npm i -g pm2
+
+cd ~/airdrop/polymarket-arb
+echo 'WEB_PASSWORD=GantiPasswordPanjang' > .env   # hanya password dashboard, JANGAN private key
+ufw allow 8080/tcp
+pm2 start ecosystem.config.js
+pm2 save && pm2 startup                         # nyala lagi otomatis setelah reboot
+```
+Buka `http://IP-VPS:8080` (login `admin` + password di `.env`). Perintah lain:
+`pm2 logs poly-lab`, `pm2 monit`, `pm2 restart poly-lab` (setelah `git pull && cargo build --release`).
+Pratinjau tanpa koneksi: `RECORD_DIR=data ./target/release/polymarket-arb --lab-demo`.
+
 ## Dashboard web
 Bot juga menyajikan dashboard yang sama di browser (desktop & HP), hanya untuk melihat:
 

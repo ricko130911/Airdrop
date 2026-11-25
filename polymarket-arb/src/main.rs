@@ -19,6 +19,7 @@ mod demo;
 mod discovery;
 mod engine;
 mod exec;
+mod lab;
 mod record;
 mod ui;
 mod web;
@@ -48,7 +49,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |f: &str| args.iter().any(|a| a == f);
     let demo = has("--demo");
-    let tui = !has("--no-tui") && !has("--check") && !has("--record") && !has("--backtest");
+    let tui = !has("--no-tui") && !has("--check") && !has("--record") && !has("--backtest") && !has("--lab-demo");
 
     // With the TUI on, logs go to a file so they don't corrupt the screen.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -64,7 +65,12 @@ fn main() -> Result<()> {
             .with_writer(std::sync::Mutex::new(file))
             .init();
     } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        use std::io::IsTerminal as _;
+        // no colour codes when logs go to a file (pm2, systemd)
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(std::io::stdout().is_terminal())
+            .init();
     }
 
     if has("--backtest") {
@@ -85,6 +91,11 @@ fn main() -> Result<()> {
             }
             demo::run(dash).await;
             return Ok(());
+        }
+        if has("--lab-demo") {
+            // dashboard preview with a simulated feed; backtest reads RECORD_DIR
+            let dir = std::env::var("RECORD_DIR").unwrap_or_else(|_| "data".into());
+            return lab::demo(dir.into()).await;
         }
         if has("--record") {
             // read-only recorder: needs no wallet and cannot trade

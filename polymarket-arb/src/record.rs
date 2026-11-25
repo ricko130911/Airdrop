@@ -4,14 +4,15 @@
 //! For every rolling up/down window it writes, into `RECORD_DIR` (default `./data`):
 //!
 //! - `quotes-YYYY-MM-DD.csv`: top of book (best bid/ask + size) of UP and DOWN on every change
-//!   (at most one row per market per `RECORD_INTERVAL_MS`, default 200 ms)
+//!   (at most one row per market per `RECORD_INTERVAL_MS`, default 250 ms)
 //! - `markets.csv`: per-window meta data (fee, tick, min size)
 //! - `outcomes.csv`: which side won, once the market resolves
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -28,6 +29,7 @@ use tracing::{info, warn};
 use crate::book::{parse_px, px_to_f64};
 use crate::config::{Interval, list, parse_interval, var};
 use crate::discovery::{MarketInfo, load, wanted};
+use crate::lab::{self, BtState, LabState, LiveMarket, OutcomeOut, Shared};
 
 struct RecConfig {
     clob_host: String,
@@ -52,7 +54,7 @@ impl RecConfig {
                 .map(|s| parse_interval(s))
                 .collect::<Result<_>>()?,
             dir: PathBuf::from(var("RECORD_DIR").unwrap_or_else(|| "data".into())),
-            interval_ms: var("RECORD_INTERVAL_MS").and_then(|v| v.parse().ok()).unwrap_or(200),
+            interval_ms: var("RECORD_INTERVAL_MS").and_then(|v| v.parse().ok()).unwrap_or(250),
         })
     }
 }
@@ -104,6 +106,8 @@ struct RecMarket {
     written: Top,
     dirty: bool,
     changed_ms: i64,
+    /// one point per second for the dashboard: (unix s, up ask, down ask)
+    history: VecDeque<(i64, Option<f64>, Option<f64>)>,
 }
 
 impl RecMarket {
@@ -171,6 +175,7 @@ impl Books {
             written: [None; 4],
             dirty: false,
             changed_ms: 0,
+            history: VecDeque::new(),
         }));
         vec![u, d]
     }
@@ -267,6 +272,34 @@ impl Books {
                 self.by_token.remove(&m.info.down_token.to_string());
             }
         }
+    }
+
+    /// Records one history point per market and returns the dashboard view.
+    fn sample(&mut self, now_s: i64) -> Vec<LiveMarket> {
+        let px = |l: Option<(u32, f64)>| l.map(|(p, _)| px_to_f64(p));
+        self.markets
+            .iter_mut()
+            .flatten()
+            .map(|m| {
+                let top = m.top();
+                if m.history.len() == 600 {
+                    m.history.pop_front();
+                }
+                m.history.push_back((now_s, px(top[1]), px(top[3])));
+                LiveMarket {
+                    slug: m.info.slug.clone(),
+                    asset: m.info.slug.split('-').next().unwrap_or("").to_owned(),
+                    label: m.info.label.clone(),
+                    end_ts: m.info.end_ts,
+                    up_bid: px(top[0]),
+                    up_ask: px(top[1]),
+                    down_bid: px(top[2]),
+                    down_ask: px(top[3]),
+                    fee_rate: m.info.fee.rate,
+                    history: m.history.iter().copied().collect(),
+                }
+            })
+            .collect()
     }
 
     fn ids(&self) -> Vec<String> {
@@ -465,18 +498,35 @@ pub async fn run() -> Result<()> {
     let (otx, mut orx) = mpsc::channel::<(String, i64, String)>(256);
     tokio::spawn(resolver(gamma, rrx, otx));
 
+    // dashboard state (+ outcomes recorded before this start)
+    let lab_state: Shared<LabState> = Arc::new(Mutex::new(LabState {
+        started_ms: now_ms(),
+        assets: cfg.assets.clone(),
+        ..LabState::default()
+    }));
+    let mut outcomes_total = load_past_outcomes(&cfg.dir.join("outcomes.csv"), &lab_state);
+    let bt: Shared<BtState> = Arc::new(Mutex::new(BtState::default()));
+    lab::start(Arc::clone(&lab_state), bt, cfg.dir.clone());
+
     let mut books = Books::default();
-    let (mut rows_total, mut outcomes_total) = (0u64, 0u64);
+    let mut rows_total = 0u64;
+    let mut msgs = 0u64;
+    let mut backoff = Duration::from_secs(1);
     loop {
         let ws = match tokio_tungstenite::connect_async(cfg.ws_url.as_str()).await {
-            Ok((ws, _)) => ws,
+            Ok((ws, _)) => {
+                backoff = Duration::from_secs(1);
+                ws
+            }
             Err(e) => {
-                warn!("ws connect failed: {e}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                warn!("ws connect failed (retry in {}s): {e}", backoff.as_secs());
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(30));
                 continue;
             }
         };
         let (mut wr, mut rd) = ws.split();
+        lab_state.lock().unwrap().ws_ok = true;
         let ids = books.ids();
         if !ids.is_empty() && wr.send(Message::text(sub_msg(&ids))).await.is_err() {
             continue;
@@ -484,10 +534,11 @@ pub async fn run() -> Result<()> {
         let mut flush = tokio::time::interval(Duration::from_millis(cfg.interval_ms.max(50)));
         let mut ping = tokio::time::interval(Duration::from_secs(5));
         let mut stats = tokio::time::interval(Duration::from_secs(60));
+        let mut second = tokio::time::interval(Duration::from_secs(1));
         loop {
             tokio::select! {
                 frame = rd.next() => match frame {
-                    Some(Ok(Message::Text(t))) => { books.apply_frame(t.as_str(), now_ms()); }
+                    Some(Ok(Message::Text(t))) => { msgs += books.apply_frame(t.as_str(), now_ms()) as u64; }
                     Some(Ok(Message::Ping(p))) => { let _ = wr.send(Message::Pong(p)).await; }
                     Some(Ok(Message::Close(_))) | None => { warn!("ws closed"); break; }
                     Some(Err(e)) => { warn!("ws error: {e}"); break; }
@@ -509,6 +560,16 @@ pub async fn run() -> Result<()> {
                 Some((slug, end, winner)) = orx.recv() => {
                     files.outcomes.write_all(format!("{slug},{end},{winner},{}\n", now_ms()).as_bytes())?;
                     outcomes_total += 1;
+                    {
+                        let mut l = lab_state.lock().unwrap();
+                        l.resolved = outcomes_total;
+                        l.push_outcome(OutcomeOut {
+                            asset: slug.split('-').next().unwrap_or("").to_owned(),
+                            slug: slug.clone(),
+                            end_ts: end,
+                            winner: winner.clone(),
+                        });
+                    }
                     info!(slug, winner, "resolved");
                 }
                 _ = flush.tick() => {
@@ -526,7 +587,16 @@ pub async fn run() -> Result<()> {
                     books.prune(now_ms() / 1000);
                     if wr.send(Message::text("PING")).await.is_err() { break; }
                 }
+                _ = second.tick() => {
+                    let view = books.sample(now_ms() / 1000);
+                    let mut l = lab_state.lock().unwrap();
+                    l.markets = view;
+                    l.rows = rows_total;
+                    l.msgs_per_sec = std::mem::take(&mut msgs);
+                }
                 _ = stats.tick() => {
+                    let bytes = dir_bytes(&cfg.dir);
+                    lab_state.lock().unwrap().data_bytes = bytes;
                     let msg = format!(
                         "{} recording {} markets | quote rows {} | resolved windows {}",
                         DateTime::<Utc>::from_timestamp_millis(now_ms()).map(|d| d.format("%H:%M:%S").to_string()).unwrap_or_default(),
@@ -537,8 +607,35 @@ pub async fn run() -> Result<()> {
             }
         }
         files.flush()?;
+        lab_state.lock().unwrap().ws_ok = false;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+}
+
+fn dir_bytes(dir: &Path) -> u64 {
+    fs::read_dir(dir)
+        .map(|it| it.filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum())
+        .unwrap_or(0)
+}
+
+/// Shows outcomes recorded by earlier runs on the dashboard; returns how many exist.
+fn load_past_outcomes(path: &Path, lab: &Shared<LabState>) -> u64 {
+    let Ok(text) = fs::read_to_string(path) else { return 0 };
+    let rows: Vec<&str> = text.lines().skip(1).filter(|l| !l.trim().is_empty()).collect();
+    let mut l = lab.lock().unwrap();
+    for row in rows.iter().skip(rows.len().saturating_sub(120)) {
+        let f: Vec<&str> = row.split(',').collect();
+        if f.len() >= 3 {
+            l.push_outcome(OutcomeOut {
+                slug: f[0].to_owned(),
+                asset: f[0].split('-').next().unwrap_or("").to_owned(),
+                end_ts: f[1].parse().unwrap_or(0),
+                winner: f[2].to_owned(),
+            });
+        }
+    }
+    l.resolved = rows.len() as u64;
+    rows.len() as u64
 }
 
 #[cfg(test)]
