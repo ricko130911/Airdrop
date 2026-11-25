@@ -66,7 +66,7 @@ pub struct Config {
     pub dry_run: bool,
 }
 
-fn var(key: &str) -> Option<String> {
+pub(crate) fn var(key: &str) -> Option<String> {
     env::var(key).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
 }
 
@@ -82,7 +82,7 @@ where
     }
 }
 
-fn list(key: &str, default: &str) -> Vec<String> {
+pub(crate) fn list(key: &str, default: &str) -> Vec<String> {
     var(key)
         .unwrap_or_else(|| default.to_owned())
         .split(',')
@@ -91,7 +91,7 @@ fn list(key: &str, default: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_interval(s: &str) -> Result<Interval> {
+pub(crate) fn parse_interval(s: &str) -> Result<Interval> {
     let (num, unit) = s.split_at(s.len() - 1);
     let n: i64 = num.parse().with_context(|| format!("bad interval {s}"))?;
     let secs = match unit {

@@ -59,6 +59,25 @@ Syarat wallet: saldo USDC di Polymarket dan allowance sudah di-approve (otomatis
 trading lewat polymarket.com). Setelah market selesai, **redeem** posisi menang di polymarket.com
 (bot tidak melakukan redeem/merge on-chain).
 
+## Uji strategi dengan data asli (tanpa uang)
+Dua alat ini **tidak bisa mengirim order** dan tidak butuh wallet:
+
+```bash
+# 1. Rekam orderbook + hasil setiap round 5m (biarkan 1-3 hari, misalnya di tmux)
+./target/release/polymarket-arb --record          # ASSETS=btc,eth,sol, RECORD_DIR=data
+
+# 2. Simulasikan strategi pada rekaman itu
+./target/release/polymarket-arb --backtest data --shares 5 --latency-ms 500
+```
+
+Backtester mensimulasikan 409 kombinasi pengaturan dari 3 strategi:
+A. beli UP+DOWN bersamaan (bot lama), B. dua arah bertahap (leg-in: beli sisi murah dulu,
+lindungi dengan sisi lain saat total ≤ target), C. last cent (sisi hampir pasti di detik akhir).
+Simulasinya sengaja pesimis: order dieksekusi 500 ms setelah keputusan (jeda yang terlihat live),
+membayar harga limit + fee taker asli, hanya terisi jika ukuran cukup. Pengaturan dipilih di 60%
+data pertama (TRAIN) dan dinilai di 40% terakhir (TEST). Semua hasil ada di
+`data/backtest-results.csv`.
+
 ## Dashboard web
 Bot juga menyajikan dashboard yang sama di browser (desktop & HP), hanya untuk melihat:
 

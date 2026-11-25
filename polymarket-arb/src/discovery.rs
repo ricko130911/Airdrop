@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::arb::FeeModel;
-use crate::config::Config;
+use crate::config::{Config, Interval};
 use crate::exec::Executor;
 
 #[derive(Clone, Debug)]
@@ -40,9 +40,10 @@ fn dec_f64(d: Decimal) -> f64 {
     d.to_string().parse().unwrap_or(0.0)
 }
 
-async fn load(
+/// Loads one market. Works with an unauthenticated CLOB client too (used by `--record`).
+pub async fn load<S: polymarket_client_sdk_v2::auth::state::State>(
     gamma: &GammaClient,
-    exec: &Executor,
+    clob: &polymarket_client_sdk_v2::clob::Client<S>,
     slug: &str,
     label: String,
     fallback_end: Option<i64>,
@@ -61,8 +62,7 @@ async fn load(
     let cond = m.condition_id.ok_or_else(|| anyhow!("{slug}: no conditionId"))?;
 
     // Authoritative token/outcome mapping + tick size + fees, and warms the SDK's caches.
-    let info = exec
-        .client
+    let info = clob
         .clob_market_info(&cond.to_string())
         .await
         .with_context(|| format!("clob market info for {slug}"))?;
@@ -84,8 +84,8 @@ async fn load(
     };
     // Warm the remaining per-token caches used by OrderBuilder::build / Client::sign.
     for t in [up.token_id, down.token_id] {
-        exec.client.tick_size(t).await?;
-        exec.client.neg_risk(t).await?;
+        clob.tick_size(t).await?;
+        clob.neg_risk(t).await?;
     }
 
     let tick = dec_f64(Decimal::from(info.min_tick_size));
@@ -115,6 +115,26 @@ async fn load(
     }))
 }
 
+/// Slugs of the current and next window for every asset/interval: `(slug, label, end_ts)`.
+pub fn wanted(assets: &[String], intervals: &[Interval], now: i64) -> Vec<(String, String, Option<i64>)> {
+    let mut out = Vec::new();
+    for asset in assets {
+        for iv in intervals {
+            let start = now - now.rem_euclid(iv.secs);
+            // current window + the next one (pre-subscribe so we're ready at the open)
+            for s in [start, start + iv.secs] {
+                let slug = format!("{asset}-updown-{}-{s}", iv.label);
+                // window start time (UTC) keeps the current and next window apart
+                let hhmm = polymarket_client_sdk_v2::types::DateTime::<polymarket_client_sdk_v2::types::Utc>::from_timestamp(s, 0)
+                    .map(|d| d.format("%H:%M").to_string())
+                    .unwrap_or_default();
+                out.push((slug, format!("{asset}-{} {hhmm}", iv.label), Some(s + iv.secs)));
+            }
+        }
+    }
+    out
+}
+
 /// Runs forever, sending newly discovered markets to the engine.
 pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>) {
     let gamma = match GammaClient::new(&cfg.gamma_host) {
@@ -130,22 +150,7 @@ pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>)
     let mut missing: HashMap<String, Instant> = HashMap::new();
     loop {
         let now = now_secs();
-        let mut wanted: Vec<(String, String, Option<i64>)> = Vec::new();
-        for asset in &cfg.assets {
-            for iv in &cfg.intervals {
-                let start = now - now.rem_euclid(iv.secs);
-                // current window + the next one (pre-subscribe so we're ready at the open)
-                for s in [start, start + iv.secs] {
-                    let slug = format!("{asset}-updown-{}-{s}", iv.label);
-                    // window start time (UTC) keeps the current and next window apart
-                    let hhmm = polymarket_client_sdk_v2::types::DateTime::<polymarket_client_sdk_v2::types::Utc>::from_timestamp(s, 0)
-                        .map(|d| d.format("%H:%M").to_string())
-                        .unwrap_or_default();
-                    let label = format!("{asset}-{} {hhmm}", iv.label);
-                    wanted.push((slug, label, Some(s + iv.secs)));
-                }
-            }
-        }
+        let mut wanted = wanted(&cfg.assets, &cfg.intervals, now);
         for slug in &cfg.extra_slugs {
             wanted.push((slug.clone(), slug.clone(), None));
         }
@@ -157,7 +162,7 @@ pub async fn run(cfg: Config, exec: Arc<Executor>, tx: mpsc::Sender<MarketInfo>)
             {
                 continue;
             }
-            match load(&gamma, &exec, &slug, label, end).await {
+            match load(&gamma, &exec.client, &slug, label, end).await {
                 Ok(Some(m)) => {
                     info!(slug = %m.slug, tick = m.tick_pips, fee_rate = m.fee.rate, "market ready");
                     seen.insert(slug);

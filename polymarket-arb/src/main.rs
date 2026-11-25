@@ -5,10 +5,13 @@
 //!   polymarket-arb --no-tui   # plain logs to stdout (for systemd / tmux / docker)
 //!   polymarket-arb --demo     # dashboard with a simulated feed, no wallet needed
 //!   polymarket-arb --check    # show the balance seen by each SIGNATURE_TYPE, then exit
+//!   polymarket-arb --record   # record order books + outcomes for backtesting (no wallet, no orders)
+//!   polymarket-arb --backtest [DIR] [--shares 5] [--latency-ms 500]   # simulate strategies on recorded data
 //!
 //! Web dashboard: http://<vps-ip>:WEB_PORT (needs WEB_PASSWORD, see .env.example)
 
 mod arb;
+mod backtest;
 mod book;
 mod config;
 mod dash;
@@ -16,6 +19,7 @@ mod demo;
 mod discovery;
 mod engine;
 mod exec;
+mod record;
 mod ui;
 mod web;
 
@@ -44,7 +48,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |f: &str| args.iter().any(|a| a == f);
     let demo = has("--demo");
-    let tui = !has("--no-tui") && !has("--check");
+    let tui = !has("--no-tui") && !has("--check") && !has("--record") && !has("--backtest");
 
     // With the TUI on, logs go to a file so they don't corrupt the screen.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -63,6 +67,11 @@ fn main() -> Result<()> {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
 
+    if has("--backtest") {
+        // offline simulation over recorded data: no network, no wallet
+        return backtest::run(&args);
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -76,6 +85,10 @@ fn main() -> Result<()> {
             }
             demo::run(dash).await;
             return Ok(());
+        }
+        if has("--record") {
+            // read-only recorder: needs no wallet and cannot trade
+            return record::run().await;
         }
         let cfg = config::Config::from_env()?;
         if has("--check") {
