@@ -388,6 +388,7 @@ pm2 start ecosystem.config.cjs && pm2 restart ecosystem.config.cjs --update-env 
 | `SNIPE_LOCK_Z` | `5` | Hasil dianggap "terkunci" bila harga harus bergerak ≥ sekian standar deviasi agar berbalik |
 | `SNIPE_LOCKED_USD` | `6` | Taruhan saat hasil terkunci (berlaku walau sniper belum terbukti; setengah jalan di LOCK_Z − 1) |
 | `SNIPE_LOCK_CONFIRM_SEC` | `3` | Taruhan terkunci hanya bila jarak aman bertahan & tidak menyusut selama sekian detik (harga tidak berbalik). 0 = mati |
+| `SNIPE_CHEAP_PRICE` / `SNIPE_CHEAP_MIN_PROB` | `0.93` / `0.995` | Pengaman harga murah: ask di bawah 0.93 (pasar kurang yakin) hanya ditembak bila bot yakin ≥ 99.5%. `SNIPE_CHEAP_PRICE=0` = mati |
 | `SNIPE_BLOCK_SHRINK` | `true` | Pengaman: tunda tembakan bila harga sedang bergerak mendekati batas (jarak aman turun > 10% dalam 3 dtk & < 5σ) |
 | `SNIPE_SHRINK_SEC` / `SNIPE_SHRINK_TOL` / `SNIPE_SHRINK_MAX_Z` | `3` / `0.9` / `5` | Lama pengamatan, batas penyusutan, dan jarak aman maksimum tempat pengaman berlaku |
 | `LATENCY_INTERVAL_MS` | `15000` | Seberapa sering ping VPS → Unhedged diukur (tampil di bar paling atas dashboard) |

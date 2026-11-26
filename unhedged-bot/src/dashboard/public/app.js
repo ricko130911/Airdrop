@@ -498,6 +498,7 @@ function renderParams(s) {
         ['Jendela tembak', `sisa ${c.tradeWhenSecondsLeft}s → ${c.stopSecondsLeft}s`],
         ['Peluang minimal', pct(sn.minProb, 0)],
         ['Harga beli maks.', sn.maxPrice.toFixed(2)],
+        ['Harga murah', sn.cheapPrice > 0 ? `< ${sn.cheapPrice.toFixed(2)} hanya bila yakin ≥ ${pct(sn.cheapMinProb, 1)}` : 'tanpa syarat tambahan'],
         ['Untung minimal', (sn.minEv * 100).toFixed(1) + '¢ / kontrak'],
         ['Modal per tembakan', `${money(sn.usd)} – ${money(sn.maxUsd)} (dinamis)`],
         ['Saat hasil terkunci', `${money(sn.lockedUsd ?? sn.usd)} (jarak aman ≥ ${sn.lockZ ?? '-'}σ)`],

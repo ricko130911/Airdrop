@@ -146,6 +146,15 @@ export function decideSnipe({ prob, side, book, feeRate = 0, cfg, exposureLeftUs
   if (ask > cfg.snipeMaxPrice) return { action: 'skip', code: 'too_pricey', reason: `ask ${ask.toFixed(2)} > maks ${cfg.snipeMaxPrice}` };
   // Hasil hampir pasti tapi dijual jauh lebih murah: hampir selalu data order book basi / anomali
   if (ask < (cfg.snipeMinPrice ?? 0)) return { action: 'skip', code: 'suspicious', reason: `ask ${ask.toFixed(2)} terlalu murah untuk hasil sepasti ini (data basi?)` };
+  // Harga murah = pasar jauh kurang yakin dibanding bot. Data live: tembakan terisi < 0.93 menang
+  // jauh lebih jarang daripada perkiraan model, jadi di harga ini bot wajib JAUH lebih yakin.
+  if (cfg.snipeCheapPrice > 0 && ask < cfg.snipeCheapPrice && prob < (cfg.snipeCheapMinProb ?? 0.995)) {
+    return {
+      action: 'skip',
+      code: 'cheap_unsure',
+      reason: `ask ${ask.toFixed(2)} murah (pasar hanya ~${Math.round(ask * 100)}% yakin): perlu yakin ≥ ${((cfg.snipeCheapMinProb ?? 0.995) * 100).toFixed(1)}%, sekarang ${(prob * 100).toFixed(1)}%`,
+    };
+  }
   const fee = feeFor(ask, feeRate, cfg.feeModel);
   const ev = prob - ask - fee; // untung harapan per kontrak (USD)
   if (ev < cfg.snipeMinEv) return { action: 'skip', code: 'thin_ev', reason: `untung tipis (${(ev * 100).toFixed(1)}¢ < ${(cfg.snipeMinEv * 100).toFixed(1)}¢)` };
@@ -245,6 +254,7 @@ export const SNIPE_REASON_LABEL = {
   data: 'data belum lengkap',
   suspicious: 'harga mencurigakan (data basi?)',
   shrinking: 'harga bergerak mendekati batas',
+  cheap_unsure: 'harga murah, bot kurang yakin',
 };
 
 /**

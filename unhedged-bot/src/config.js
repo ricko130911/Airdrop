@@ -91,6 +91,10 @@ export function loadConfig() {
     snipeMaxPrice: num('SNIPE_MAX_PRICE', 0.97),
     // Ask di bawah ini saat bot >=97% yakin dianggap data basi/anomali dan tidak diambil
     snipeMinPrice: num('SNIPE_MIN_PRICE', 0.8),
+    // Ask di bawah SNIPE_CHEAP_PRICE (pasar kurang yakin) hanya ditembak bila bot yakin >= SNIPE_CHEAP_MIN_PROB.
+    // SNIPE_CHEAP_PRICE=0 mematikan pengaman ini.
+    snipeCheapPrice: num('SNIPE_CHEAP_PRICE', 0.93),
+    snipeCheapMinProb: num('SNIPE_CHEAP_MIN_PROB', 0.995),
     // Lama jeda menembak setelah Unhedged menolak order karena maintenance (ms)
     maintenancePauseMs: num('MAINTENANCE_PAUSE_MS', 5 * 60_000),
     snipeMinEv: num('SNIPE_MIN_EV', 0.015),
@@ -184,6 +188,8 @@ function validate(cfg) {
   if (!(cfg.snipeMinProb > 0.5 && cfg.snipeMinProb < 1)) errs.push('SNIPE_MIN_PROB harus di antara 0.5 dan 1');
   if (!(cfg.snipeMaxPrice > 0 && cfg.snipeMaxPrice < 1)) errs.push('SNIPE_MAX_PRICE harus di antara 0 dan 1');
   if (cfg.snipeUsd <= 0) errs.push('SNIPE_USD harus > 0');
+  if (!(cfg.snipeCheapPrice >= 0 && cfg.snipeCheapPrice < 1)) errs.push('SNIPE_CHEAP_PRICE harus di antara 0 dan 1 (0 = mati)');
+  if (!(cfg.snipeCheapMinProb > 0.5 && cfg.snipeCheapMinProb <= 1)) errs.push('SNIPE_CHEAP_MIN_PROB harus di antara 0.5 dan 1');
   if (cfg.snipeMaxUsd < cfg.snipeUsd) errs.push('SNIPE_MAX_USD harus >= SNIPE_USD');
   if (!(cfg.publicRps >= 1 && cfg.publicRps <= 10)) errs.push('PUBLIC_RPS harus di antara 1 dan 10');
   if (!(cfg.snipeMaxAttempts >= 1)) errs.push('SNIPE_MAX_ATTEMPTS harus >= 1');

@@ -1174,6 +1174,8 @@ export class Bot {
                 lockedUsd: c.snipeLockedUsd,
                 lockZ: c.snipeLockZ,
                 lockConfirmSec: c.snipeLockConfirmSec,
+                cheapPrice: c.snipeCheapPrice,
+                cheapMinProb: c.snipeCheapMinProb,
                 maxLossesPerDay: c.snipeMaxLossesPerDay,
                 dailyTarget: c.dailyProfitTargetUsd,
                 feeModel: c.feeModel,

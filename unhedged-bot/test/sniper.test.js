@@ -46,3 +46,20 @@ test('feeFor official: cocok dengan tabel resmi Unhedged (100 kontrak, tier 0)',
   assert.ok(near(feeFor(0.75, 0.05, 'official') * 100, 0.9375)); // taker @0.75
   assert.ok(feeFor(0.98, 0.05, 'official') < 0.001); // nyaris nol di harga tinggi
 });
+
+import { decideSnipe as ds } from '../src/strategy.js';
+
+test('pengaman harga murah: ask < 0.93 butuh yakin >= 99.5%', () => {
+  const cfg = { snipeMinProb: 0.98, snipeMaxPrice: 0.97, snipeMinPrice: 0.8, snipeMinEv: 0.015, snipeUsd: 30, snipeMaxUsd: 50, feeModel: 'official', snipeCheapPrice: 0.93, snipeCheapMinProb: 0.995 };
+  const book = (a) => ({ down: { bestAsk: a } });
+  // Kasus CC 26 Nov: ask 0.91, yakin 99.0% -> ditahan
+  const cc = ds({ prob: 0.99, side: 'down', book: book(0.91), feeRate: 0.05, cfg, exposureLeftUsd: 100 });
+  assert.equal(cc.action, 'skip');
+  assert.equal(cc.code, 'cheap_unsure');
+  // Ask murah tapi bot sangat yakin -> tetap menembak (mis. ETH 0.84 p=0.9988)
+  assert.equal(ds({ prob: 0.9988, side: 'down', book: book(0.84), feeRate: 0.05, cfg, exposureLeftUsd: 100 }).action, 'buy');
+  // Harga normal tidak terpengaruh
+  assert.equal(ds({ prob: 0.985, side: 'down', book: book(0.95), feeRate: 0.05, cfg, exposureLeftUsd: 100 }).action, 'buy');
+  // Bisa dimatikan
+  assert.equal(ds({ prob: 0.99, side: 'down', book: book(0.91), feeRate: 0.05, cfg: { ...cfg, snipeCheapPrice: 0 }, exposureLeftUsd: 100 }).action, 'buy');
+});
