@@ -81,7 +81,11 @@ export class Bot {
     const c = this.cfg;
     this.loadHistory();
     this.log.info(
-      `Bot mulai | mode=${this.live ? 'LIVE' : 'DRY-RUN (simulasi)'} | aset=${c.assets.join(',')} | maxOrder=$${c.maxOrderUsd} | minEdge=${c.minEdge} | trade saat sisa<=${c.tradeWhenSecondsLeft}s`,
+      `Bot mulai | mode=${this.live ? 'LIVE' : 'DRY-RUN (simulasi)'} | aset=${c.assets.join(',')} | ` +
+        (c.strategy === 'sniper'
+          ? `sniper: taruhan $${c.snipeUsd}–$${c.snipeMaxUsd} (terkunci $${c.snipeLockedUsd}) | yakin >= ${(c.snipeMinProb * 100).toFixed(1)}%` +
+            `${c.snipeCheapPrice > 0 ? ` (ask < ${c.snipeCheapPrice}: >= ${(c.snipeCheapMinProb * 100).toFixed(1)}%)` : ''} | jendela sisa ${c.snipeMaxSec}→${c.snipeMinSec} dtk`
+          : `maxOrder=$${c.maxOrderUsd} | minEdge=${c.minEdge} | trade saat sisa<=${c.tradeWhenSecondsLeft}s`),
     );
     if (this.live) {
       const me = await this.api.me().catch((e) => {
