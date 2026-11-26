@@ -1,7 +1,7 @@
 import { discoverMarkets, extractStrike, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf, durationLabel } from './markets.js';
 import { estimateVolatility, estimateDrift, probabilityUp, probabilityUpTwap, twapZ, brier } from './model.js';
 import { decideOrderBook, decideParimutuel, parimutuelPools, completeSetArb, decideSnipe, feeFor, updateSnipeScan, describeSnipeScan, lockStability } from './strategy.js';
-import { Learner, CHECKPOINTS, RECORD_VERSION, loadRecords, settleRecords, tradesFromRecords } from './analytics.js';
+import { Learner, CHECKPOINTS, RECORD_VERSION, forEachRecord, isSettleRecord, tradesFromRecords } from './analytics.js';
 import path from 'node:path';
 import { escapeHtml as h } from './notify.js';
 
@@ -38,7 +38,9 @@ export class Bot {
     this.stopping = false;
     this.paused = false; // dijeda manual dari dashboard
     this.startedAt = Date.now();
-    this.history = []; // market yang sudah selesai (untuk dashboard)
+    this.history = []; // market yang sudah selesai (untuk dashboard, dibatasi 500 terakhir)
+    // Trade 48 jam terakhir untuk statistik "hari ini" & rem harian (TIDAK boleh memakai history yang dibatasi)
+    this.recentTrades = [];
     this.account = { available: null, total: null, lockedEngine: null, username: null };
     this.lastPriceRefresh = 0;
     this.stratStats = {}; // statistik per strategi (sniper, sniper-probe, model)
@@ -56,18 +58,27 @@ export class Bot {
   loadHistory() {
     const file = path.join(this.cfg.logDir ?? 'logs', 'decisions.jsonl');
     try {
-      const records = settleRecords(loadRecords(file));
-      // Pembelajaran (kalibrasi model, peluang) memakai SEMUA riwayat, termasuk simulasi
-      this.learner.addRecords(records);
-      // Statistik, riwayat dashboard, dan rem harian HANYA dari mode yang sama:
-      // mode live tidak tercampur hasil simulasi, dan sebaliknya.
-      const sameMode = records.filter((r) => (this.live ? r.live === true : r.live !== true));
-      for (const r of sameMode) this.applySettleRecord(r);
-      if (records.length) {
+      // Dibaca baris demi baris (hemat memori): catatan utuh tidak disimpan
+      let total = 0;
+      let same = 0;
+      let pnl = 0;
+      forEachRecord(file, (r) => {
+        if (!isSettleRecord(r)) return;
+        total++;
+        // Pembelajaran (kalibrasi model, peluang) memakai SEMUA riwayat, termasuk simulasi
+        this.learner.addRecord(r, false);
+        // Statistik, riwayat dashboard, dan rem harian HANYA dari mode yang sama:
+        // mode live tidak tercampur hasil simulasi, dan sebaliknya.
+        if (this.live ? r.live === true : r.live !== true) {
+          same++;
+          pnl += this.applySettleRecord(r)?.pnl ?? 0;
+        }
+      });
+      this.learner.refit();
+      if (total) {
         const rep = this.learner.report();
-        const pnl = sameMode.reduce((a, r) => a + (tradesFromRecords([r])[0]?.pnl ?? 0), 0);
         this.log.info(
-          `Riwayat dimuat: ${records.length} market untuk pembelajaran | statistik ${this.live ? 'LIVE' : 'simulasi'}: ${sameMode.length} market, PnL $${pnl.toFixed(2)}` +
+          `Riwayat dimuat: ${total} market untuk pembelajaran | statistik ${this.live ? 'LIVE' : 'simulasi'}: ${same} market, PnL $${pnl.toFixed(2)}` +
             ` | kalibrasi aktif: ${rep.calibration.filter((c) => c.active).map((c) => `${c.checkpoint}s(k=${c.k.toFixed(2)})`).join(', ') || 'belum (data kurang)'}`,
         );
       }
@@ -876,16 +887,16 @@ export class Bot {
     let snipeLosses = 0;
     let sniperPnl = 0;
     let sniperTrades = 0;
-    for (const h of this.history) {
-      if (!h.trade || new Date(h.ts).toISOString().slice(0, 10) !== day) continue;
+    for (const t of this.recentTrades) {
+      if (new Date(t.ts).toISOString().slice(0, 10) !== day) continue;
       trades++;
-      pnl += h.trade.pnl;
-      if (String(h.trade.strategy ?? '').startsWith('sniper')) {
-        sniperPnl += h.trade.pnl;
+      pnl += t.pnl;
+      if (String(t.strategy ?? '').startsWith('sniper')) {
+        sniperPnl += t.pnl;
         sniperTrades++;
       }
-      if (h.trade.won) wins++;
-      else if (h.trade.strategy === 'sniper') snipeLosses++;
+      if (t.won) wins++;
+      else if (t.strategy === 'sniper') snipeLosses++;
     }
     return { day, pnl, trades, wins, snipeLosses, sniperPnl, sniperTrades };
   }
@@ -1078,6 +1089,10 @@ export class Bot {
       s.paperPnl += t.pnl;
       s.trades++;
       if (t.won) s.wins++;
+      const ts = Date.parse(r.ts) || Date.now();
+      this.recentTrades.push({ ts, pnl: t.pnl, won: t.won, strategy: t.strategy });
+      const cutoff = Date.now() - 48 * 3600_000;
+      while (this.recentTrades.length && this.recentTrades[0].ts < cutoff) this.recentTrades.shift();
     }
     this.history.push({
       durationSec: r.durationSec ?? null,

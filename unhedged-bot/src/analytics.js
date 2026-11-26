@@ -9,6 +9,11 @@
 //     di zona itu agar tetap bisa belajar bila kondisinya membaik.
 
 import fs from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
+
+/** Batas sampel kalibrasi per titik waktu (yang terbaru) & ringkasan scan yang disimpan di memori. */
+const MAX_CAL_SAMPLES = 20000;
+const MAX_SCAN_ROWS = 100000;
 
 export const TIME_BUCKETS = [
   { key: '0-30s', min: 0, max: 30 },
@@ -47,24 +52,55 @@ export function probBucket(p) {
   return PROB_BUCKETS.find((b) => p >= b.min && p < b.max)?.key ?? null;
 }
 
+/**
+ * Baca file JSONL baris demi baris (per 1 MB) tanpa memuat seluruh file ke memori sekaligus.
+ * Baris rusak dilewati. fn dipanggil untuk setiap catatan.
+ */
+export function forEachRecord(file, fn) {
+  if (!fs.existsSync(file)) return;
+  const fd = fs.openSync(file, 'r');
+  const buf = Buffer.alloc(1 << 20);
+  const dec = new StringDecoder('utf8');
+  let rest = '';
+  const handle = (line) => {
+    if (!line.trim()) return;
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      return;
+    }
+    fn(r);
+  };
+  try {
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n <= 0) break;
+      const lines = (rest + dec.write(buf.subarray(0, n))).split('\n');
+      rest = lines.pop();
+      for (const line of lines) handle(line);
+    }
+    handle(rest + dec.end());
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Baca semua catatan JSONL (baris rusak dilewati). */
 export function loadRecords(file) {
-  if (!fs.existsSync(file)) return [];
   const out = [];
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      out.push(JSON.parse(line));
-    } catch {
-      /* lewati */
-    }
-  }
+  forEachRecord(file, (r) => out.push(r));
   return out;
+}
+
+/** Catatan hasil market ("settle") versi baru dengan hasil resmi. */
+export function isSettleRecord(r) {
+  return r?.kind === 'settle' && (r.v ?? 0) >= RECORD_VERSION && (r.outcomeUp === 0 || r.outcomeUp === 1);
 }
 
 /** Catatan "settle" versi baru saja. */
 export function settleRecords(records) {
-  return records.filter((r) => r?.kind === 'settle' && (r.v ?? 0) >= RECORD_VERSION && (r.outcomeUp === 0 || r.outcomeUp === 1));
+  return records.filter(isSettleRecord);
 }
 
 /** Ubah catatan settle menjadi daftar trade yang terisi. */
@@ -196,7 +232,11 @@ export class Learner {
     this.minCal = minCalibrationSamples;
     this.minZone = minZoneTrades;
     this.enabled = enabled;
-    this.records = [];
+    // Hemat memori: catatan utuh TIDAK disimpan, hanya angka yang dipakai (jumlah market,
+    // sampel kalibrasi, trade, dan ringkasan scan per round).
+    this.marketCount = 0;
+    this.scanRows = []; // ringkasan scan per round
+    this.scanReasons = {}; // total alasan tidak menembak (sepanjang waktu)
     this.samples = new Map(CHECKPOINTS.map((c) => [c, []])); // checkpoint -> [{p,y}]
     this.fits = new Map();
     this.trades = [];
@@ -209,9 +249,27 @@ export class Learner {
 
   addRecord(r, refit = true) {
     if (r?.kind !== 'settle' || (r.v ?? 0) < RECORD_VERSION) return;
-    this.records.push(r);
+    this.marketCount++;
     for (const c of r.checkpoints ?? []) {
-      if (this.samples.has(c.s) && Number.isFinite(c.pUp)) this.samples.get(c.s).push({ p: c.pUp, y: r.outcomeUp });
+      const list = this.samples.get(c.s);
+      if (!list || !Number.isFinite(c.pUp)) continue;
+      list.push({ p: c.pUp, y: r.outcomeUp });
+      if (list.length > MAX_CAL_SAMPLES + 1000) list.splice(0, list.length - MAX_CAL_SAMPLES);
+    }
+    const s = r.scan;
+    if (s) {
+      this.scanRows.push({
+        f: !!s.fired,
+        pr: !!s.probe,
+        ef: s.bestFlat?.ev ?? null,
+        er: s.bestRisk?.ev ?? null,
+        el: !!s.bestEligible,
+        ee: s.bestEligible?.ev ?? null,
+        side: s.bestRisk?.side ?? null,
+        y: r.outcomeUp,
+      });
+      if (this.scanRows.length > MAX_SCAN_ROWS + 1000) this.scanRows.splice(0, this.scanRows.length - MAX_SCAN_ROWS);
+      for (const [k, n] of Object.entries(s.reasons ?? {})) this.scanReasons[k] = (this.scanReasons[k] ?? 0) + n;
     }
     const [t] = tradesFromRecords([r]);
     if (t) this.trades.push(t);
@@ -276,22 +334,20 @@ export class Learner {
    * @param {number} minEv untung minimal per kontrak
    */
   snipeScanSummary(minEv = 0.015) {
-    const scans = this.records.filter((r) => r.scan);
-    const out = { rounds: scans.length, fired: 0, probes: 0, evFlat: 0, evRisk: 0, eligible: 0, eligibleWithSeller: 0, bestSideRight: 0, bestSideKnown: 0, reasons: {} };
-    for (const r of scans) {
-      const s = r.scan;
-      if (s.fired) out.fired++;
-      if (s.probe) out.probes++;
-      if (s.bestFlat && s.bestFlat.ev >= minEv) out.evFlat++;
-      if (s.bestRisk && s.bestRisk.ev >= minEv) out.evRisk++;
+    const rows = this.scanRows;
+    const out = { rounds: rows.length, fired: 0, probes: 0, evFlat: 0, evRisk: 0, eligible: 0, eligibleWithSeller: 0, bestSideRight: 0, bestSideKnown: 0, reasons: { ...this.scanReasons } };
+    for (const x of rows) {
+      if (x.f) out.fired++;
+      if (x.pr) out.probes++;
+      if (x.ef !== null && x.ef >= minEv) out.evFlat++;
+      if (x.er !== null && x.er >= minEv) out.evRisk++;
       // Peluang sniper yang sesungguhnya: yakin (>= minimal), ada penjual, dan untung >= minimal
-      if (s.bestEligible) out.eligibleWithSeller++;
-      if (s.bestEligible && s.bestEligible.ev >= minEv) out.eligible++;
-      if (s.bestRisk) {
+      if (x.el) out.eligibleWithSeller++;
+      if (x.el && x.ee !== null && x.ee >= minEv) out.eligible++;
+      if (x.side) {
         out.bestSideKnown++;
-        if ((s.bestRisk.side === 'up' ? 1 : 0) === r.outcomeUp) out.bestSideRight++;
+        if ((x.side === 'up' ? 1 : 0) === x.y) out.bestSideRight++;
       }
-      for (const [k, n] of Object.entries(s.reasons ?? {})) out.reasons[k] = (out.reasons[k] ?? 0) + n;
     }
     return out;
   }
@@ -311,7 +367,7 @@ export class Learner {
       enabled: this.enabled,
       minZoneTrades: this.minZone,
       minCalibrationSamples: this.minCal,
-      markets: this.records.length,
+      markets: this.marketCount,
       total: summarize(trades),
       byTime,
       byAsset,

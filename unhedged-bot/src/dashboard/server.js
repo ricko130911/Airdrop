@@ -22,6 +22,39 @@ const SECURITY_HEADERS = {
     "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
 };
 
+/** Klien live (SSE) yang macet lebih lama dari ini diputus, agar data tidak menumpuk di memori bot. */
+export const SSE_STUCK_MS = 30_000;
+
+/**
+ * Kirim data terbaru ke semua klien SSE TANPA menumpuk data di memori.
+ * Layar yang tidak membaca (mis. Smart TV standby, tab HP yang tertidur) membuat data tertahan di
+ * memori bot. Karena itu:
+ *  - klien yang belum selesai menerima kiriman sebelumnya dilewati (kiriman ini dibuang, berikutnya yang terbaru);
+ *  - klien yang macet lebih dari SSE_STUCK_MS diputus (browser yang masih hidup otomatis menyambung ulang).
+ * @param {Map<any, {admin: boolean, stuckSince: number|null}>} clients
+ * @param {(admin: boolean) => string} render
+ */
+export function broadcast(clients, render, now = Date.now()) {
+  const cache = {};
+  for (const [c, st] of clients) {
+    if (c.destroyed || c.writableEnded) {
+      clients.delete(c);
+      continue;
+    }
+    if (c.writableNeedDrain) {
+      st.stuckSince ??= now;
+      if (now - st.stuckSince > SSE_STUCK_MS) {
+        clients.delete(c);
+        c.destroy();
+      }
+      continue;
+    }
+    st.stuckSince = null;
+    cache[st.admin] ??= render(st.admin);
+    c.write(cache[st.admin]);
+  }
+}
+
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
   const hb = crypto.createHash('sha256').update(String(b)).digest();
@@ -40,7 +73,7 @@ export function startDashboard({ bot, cfg, log }) {
   const publicView = cfg.dashboardPublicView !== false || !adminEnabled;
 
   const failures = new Map(); // ip -> {count, until}
-  const clients = new Map(); // res -> admin?
+  const clients = new Map(); // res -> {admin, stuckSince}
 
   function checkAuth(req, res) {
     const ip = req.socket.remoteAddress ?? '?';
@@ -145,7 +178,9 @@ export function startDashboard({ bot, cfg, log }) {
           'x-accel-buffering': 'no',
         });
         res.write('retry: 3000\n\n');
-        clients.set(res, admin);
+        // Deteksi koneksi mati (mis. TV dimatikan tanpa menutup koneksi) lebih cepat
+        req.socket.setKeepAlive?.(true, 30_000);
+        clients.set(res, { admin, stuckSince: null });
         res.write(`data: ${JSON.stringify(viewFor(admin))}\n\n`);
         req.on('close', () => clients.delete(res));
         return;
@@ -184,11 +219,7 @@ export function startDashboard({ bot, cfg, log }) {
 
   const timer = setInterval(() => {
     if (!clients.size) return;
-    const cache = {};
-    for (const [c, admin] of clients) {
-      cache[admin] ??= `data: ${JSON.stringify(viewFor(admin))}\n\n`;
-      c.write(cache[admin]);
-    }
+    broadcast(clients, (admin) => `data: ${JSON.stringify(viewFor(admin))}\n\n`);
   }, 2000);
   timer.unref();
 
