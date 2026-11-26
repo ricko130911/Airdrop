@@ -33,6 +33,7 @@ export class Bot {
     this.dayPnl = 0;
     this.positionCost = new Map(); // marketId -> USD (posisi live)
     this.foreignMarkets = new Set(); // market yang punya order manual milik user -> tidak disentuh
+    this.heldMarkets = new Set(); // market yang SUDAH ada posisinya di akun (dari API), mis. sebelum bot restart
     this.stats = { settled: 0, scored: 0, correct: 0, brierSum: 0, trades: 0, wins: 0, paperPnl: 0 };
     this.stopping = false;
     this.paused = false; // dijeda manual dari dashboard
@@ -208,7 +209,8 @@ export class Bot {
           type: marketType(a.market),
           strike: null,
           order: null, // {id, side, outcome, price, quantity, dry}
-          hasPosition: false,
+          // Posisi yang sudah ada sebelum bot (re)start: jangan beli lagi di market yang sama
+          hasPosition: this.live && this.heldMarkets.has(a.market.id),
           bet: null,
           lastEval: null,
           paper: null,
@@ -245,12 +247,15 @@ export class Bot {
       // Posisi aktif (untuk exposure & deteksi fill)
       const res = await this.api.positions({ marketType: 'ORDER_BOOK', limit: 500 });
       this.positionCost.clear();
+      const held = new Set();
       for (const p of res?.positions ?? []) {
         const cost = Number(p.totalBetAmount ?? p.costAmount ?? 0);
         this.positionCost.set(p.marketId, (this.positionCost.get(p.marketId) ?? 0) + (Number.isFinite(cost) ? cost : 0));
+        if (Number(p.quantity ?? 1) > 0) held.add(p.marketId);
         const entry = this.markets.get(p.marketId);
         if (entry && Number(p.quantity ?? 1) > 0) entry.hasPosition = true;
       }
+      this.heldMarkets = held;
     } catch (e) {
       this.log.warn(`Gagal memperbarui risiko: ${e.message}`);
     }
