@@ -28,6 +28,18 @@ export const CHECKPOINTS = [150, 90, 45, 20];
 /** Versi format catatan; catatan lebih lama diabaikan oleh pembelajaran. */
 export const RECORD_VERSION = 2;
 
+/** Kelompok harga beli (per kontrak) untuk melihat apakah tembakan "murah" lebih berisiko. */
+export const PRICE_BUCKETS = [
+  { key: '<0.85', min: 0, max: 0.85 },
+  { key: '0.85-0.90', min: 0.85, max: 0.9 },
+  { key: '0.90-0.93', min: 0.9, max: 0.93 },
+  { key: '0.93-0.96', min: 0.93, max: 0.96 },
+  { key: '0.96+', min: 0.96, max: 1.01 },
+];
+export function priceBucket(price) {
+  return PRICE_BUCKETS.find((b) => price >= b.min && price < b.max)?.key ?? null;
+}
+
 export function timeBucket(sec) {
   return TIME_BUCKETS.find((b) => sec >= b.min && sec < b.max)?.key ?? TIME_BUCKETS[TIME_BUCKETS.length - 1].key;
 }
@@ -81,6 +93,10 @@ export function tradesFromRecords(records) {
       durationSec: r.durationSec ?? 300,
       secondsLeft: p.fill?.secondsLeft ?? null,
       prob: p.fill?.prob ?? null,
+      // Peluang mentah model (sebelum kalibrasi) untuk sisi yang dibeli
+      probRaw: Number.isFinite(p.fill?.pUpRaw) ? (p.side === 'up' ? p.fill.pUpRaw : 1 - p.fill.pUpRaw) : null,
+      // Ask yang dilihat bot saat memutuskan (harga terisi bisa lebih murah)
+      ask: Number.isFinite(p.fill?.ask) ? p.fill.ask : null,
       edge: p.fill?.edge ?? null,
     });
   }

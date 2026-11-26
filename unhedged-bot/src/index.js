@@ -7,7 +7,8 @@ import { Telegram, escapeHtml } from './notify.js';
 import { LatencyMonitor } from './latency.js';
 import { Bot } from './bot.js';
 import { startDashboard } from './dashboard/server.js';
-import { Learner, loadRecords, groupSummary, timeBucket, TIME_BUCKETS } from './analytics.js';
+import { Learner, loadRecords, groupSummary, timeBucket, TIME_BUCKETS, priceBucket, PRICE_BUCKETS } from './analytics.js';
+import { SNIPE_REASON_LABEL } from './strategy.js';
 import path from 'node:path';
 import { discoverMarkets, extractStrike, marketText, marketType, resolverInfo, bookTop, marketTakerFee, priceSourceOf } from './markets.js';
 
@@ -175,7 +176,7 @@ function analyze(cfg) {
   const sc = L.snipeScanSummary(cfg.snipeMinEv);
   if (sc.rounds) {
     const pc = (a, b) => (b ? ((a / b) * 100).toFixed(1) + '%' : '-');
-    const labels = { no_prob: 'peluang tak tersedia', unsure: 'belum pasti', no_ask: 'tidak ada penjual', too_pricey: 'harga terlalu mahal', thin_ev: 'untung tipis setelah fee', size: 'batas modal', data: 'data belum lengkap', suspicious: 'harga mencurigakan (data basi?)' };
+    const labels = SNIPE_REASON_LABEL;
     console.log('\n== Peluang sniper per round ==');
     console.log(`Round dipantau: ${sc.rounds} | sniper menembak: ${sc.fired} | probe: ${sc.probes}`);
     console.log(`Round dengan penjual di sisi pemenang saat bot yakin: ${sc.eligibleWithSeller} (${pc(sc.eligibleWithSeller, sc.rounds)})`);
@@ -203,13 +204,26 @@ function analyze(cfg) {
     console.log('\n== SNIPER menurut aset ==');
     console.log(head);
     for (const g of groupSummary(sn, (t) => t.asset)) console.log(row(g));
+    console.log('\n== SNIPER menurut harga terisi (murah = pasar kurang yakin dibanding bot) ==');
+    console.log(head);
+    for (const g of groupSummary(sn, (t) => priceBucket(t.price), PRICE_BUCKETS.map((b) => b.key))) {
+      if (g.n) console.log(row(g));
+    }
+    console.log('\n== SNIPER: harga terisi dibanding ask yang dilihat bot ==');
+    console.log(head);
+    const vsAsk = (t) => (t.ask === null ? 'ask ?' : t.price < t.ask - 0.005 ? 'lbh murah' : 'sama ask');
+    for (const g of groupSummary(sn, vsAsk, ['sama ask', 'lbh murah', 'ask ?'])) {
+      if (g.n) console.log(row(g));
+    }
     const losses = sn.filter((t) => !t.won);
     console.log(`\n== Kekalahan sniper (${losses.length}) ==`);
     for (const t of losses) {
       const dur = t.durationSec >= 3600 ? `${t.durationSec / 3600} jam` : `${Math.round((t.durationSec ?? 300) / 60)} mnt`;
       console.log(
         `- ${String(t.ts ?? '').slice(0, 16).replace('T', ' ')}  ${t.asset} ${dur}  ${t.side.toUpperCase()} ${Math.round(t.quantity)} @ ${t.price.toFixed(2)}` +
-          `  sisa ${t.secondsLeft ?? '?'} dtk  yakin ${t.prob !== null ? (t.prob * 100).toFixed(1) + '%' : '?'}  ${usd(t.pnl)}`,
+          `${t.ask !== null && Math.abs(t.ask - t.price) >= 0.005 ? ` (ask terlihat ${t.ask.toFixed(2)})` : ''}` +
+          `  sisa ${t.secondsLeft ?? '?'} dtk  yakin ${t.prob !== null ? (t.prob * 100).toFixed(1) + '%' : '?'}` +
+          `${t.probRaw !== null ? ` (mentah ${(t.probRaw * 100).toFixed(1)}%)` : ''}  ${usd(t.pnl)}`,
       );
     }
   }
